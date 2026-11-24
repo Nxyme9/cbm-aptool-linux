@@ -752,12 +752,13 @@ static int fuzz_mode(int argc, char **argv) {
 static void print_scan_usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s scan <device|image> [--start LBA] [--end LBA] [--chunk MiB]\n"
-        "                            [--carve <dir>] [--json <report>]\n"
+        "                            [--carve <dir>] [--json <report>] [--all-hits]\n"
         "  --start LBA   first INCLUSIVE 512-byte LBA (default 0)\n"
         "  --end LBA     last INCLUSIVE 512-byte LBA (default: last LBA)\n"
         "  --chunk MiB   read chunk size, minimum 1 (default 8)\n"
         "  --carve <dir> write hit-NNN-<offset>.cbm (85688 bytes per hit)\n"
         "  --json <rpt>  write a deterministic JSON report\n"
+        "  --all-hits    keep every candidate, including close distinct containers\n"
         "Scan is READ-ONLY: --carve/--json write only to the explicit local paths.\n"
         "Hits are CANDIDATES, not confirmed containers; magic is UNVERIFIED and\n"
         "advisory, detection uses the structural probe. Exit: 0 ok, 1 runtime\n"
@@ -794,9 +795,11 @@ static int scan_mode(int argc, char **argv) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *carve = NULL, *json = NULL;
     unsigned long long start_lba = 0ULL, end_lba = 0ULL, chunk_mib = 8ULL;
-    int have_end = 0;
+    int have_end = 0, all_hits = 0;
 
-    if (!path || !path[0]) {
+    if (!path || !path[0] || strcmp(path, "--all-hits") == 0) {
+        /* A bare "scan --all-hits" has no image; do not treat the flag as a
+         * device path and report a runtime open error instead of usage. */
         fprintf(stderr, "Error: scan requires a device or image path\n");
         print_scan_usage(argv[0]);
         return 2;
@@ -818,6 +821,8 @@ static int scan_mode(int argc, char **argv) {
                 print_scan_usage(argv[0]);
                 return 2;
             }
+        } else if (strcmp(a, "--all-hits") == 0) {
+            all_hits = 1;
         } else if (strcmp(a, "--carve") == 0 || strcmp(a, "--json") == 0) {
             if (++i >= argc || !argv[i][0]) {
                 fprintf(stderr, "Error: %s needs a local path\n", a);
@@ -890,6 +895,7 @@ static int scan_mode(int argc, char **argv) {
            start_lba, end_lba, start_byte, end_byte);
     printf("Chunk: %llu MiB (%zu bytes)\n", chunk_mib, chunk_bytes);
     puts("Detection: structural probe only; magic UNVERIFIED/advisory");
+    if (all_hits) puts("Hits: exhaustive (--all-hits; candidates only)");
     if (tea_init(pe_path) != 0) {
         fprintf(stderr, "Error: failed to initialize crypto backend\n");
         return 1;
@@ -898,8 +904,8 @@ static int scan_mode(int argc, char **argv) {
     cbm_scan_hit_t *hits = NULL;
     size_t n = 0;
     int rc = 1;
-    if (cbm_scan_image(path, start_byte, end_byte, chunk_bytes, NULL, 0,
-                       &hits, &n, err, sizeof(err)) != 0) {
+    if (cbm_scan_image_ex(path, start_byte, end_byte, chunk_bytes, NULL, 0,
+                          all_hits ? 0 : 1, &hits, &n, err, sizeof(err)) != 0) {
         fprintf(stderr, "Error: %s\n", err[0] ? err : "scan failed");
         goto out;
     }
@@ -1314,6 +1320,16 @@ done:
 
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
+    /* --all-hits is scan-only. Reject it before dispatch so no other mode and
+     * no bare invocation can mistake it for a device path or ignore it. */
+    if (argc >= 2 && strcmp(argv[1], "scan") != 0) {
+        for (int i = 1; i < argc; i++) {
+            if (strcmp(argv[i], "--all-hits") == 0) {
+                fprintf(stderr, "Error: --all-hits is only valid with scan\n");
+                return 2;
+            }
+        }
+    }
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
     /* Container/fuzz/scan modes load the crypto backend themselves and must

@@ -237,11 +237,12 @@ static int hit_offset_cmp(const void *a, const void *b) {
     return 0;
 }
 
-int cbm_scan_image(const char *path, unsigned long long start_byte,
-                   unsigned long long end_byte, size_t chunk_bytes,
-                   const char *const *magics, size_t nmagic,
-                   cbm_scan_hit_t **out, size_t *out_count,
-                   char *err, size_t errlen) {
+int cbm_scan_image_ex(const char *path, unsigned long long start_byte,
+                      unsigned long long end_byte, size_t chunk_bytes,
+                      const char *const *magics, size_t nmagic,
+                      int suppress_clusters,
+                      cbm_scan_hit_t **out, size_t *out_count,
+                      char *err, size_t errlen) {
     if (err && errlen) err[0] = '\0';
     if (!path || !out || !out_count)
         return seterr(err, errlen, "path, out and out_count are required");
@@ -349,29 +350,43 @@ int cbm_scan_image(const char *path, unsigned long long start_byte,
      * overlap with a higher base offset, so the raw list is not ordered. */
     if (count > 1) qsort(hits, count, sizeof(*hits), hit_offset_cmp);
 
-    /* Keep the LOWEST offset of each cluster of candidates closer together
-     * than one container. A window shifted by whole CBC blocks inside a real
-     * container decrypts a genuine plaintext suffix and can pass the gate;
-     * those suffix hits are duplicates, not distinct containers. Exact repeats
-     * from overlapping chunks collapse here too. Offsets are bounded by
-     * LLONG_MAX, so adding CBM_CONTAINER_SIZE cannot overflow.
+    /* Legacy default: keep the LOWEST offset of each cluster of candidates
+     * closer together than one container. A window shifted by whole CBC blocks
+     * inside a real container decrypts a genuine plaintext suffix and can pass
+     * the gate; those suffix hits are duplicates, not distinct containers.
+     * Exact repeats from overlapping chunks collapse here too. Offsets are
+     * bounded by LLONG_MAX, so adding CBM_CONTAINER_SIZE cannot overflow.
      * LIMITATION: two genuinely distinct containers whose starts are less
-     * than 85688 bytes apart are reported as one hit; this heuristic cannot
-     * separate them. */
-    size_t kept = 0;
-    for (size_t i = 0; i < count; i++) {
-        if (kept > 0 &&
-            hits[i].offset <
-            hits[kept - 1].offset + (unsigned long long)CBM_CONTAINER_SIZE)
-            continue;
-        if (kept != i) hits[kept] = hits[i];
-        kept++;
+     * than 85688 bytes apart are reported as one hit; opt out with
+     * suppress_clusters == 0 to keep every candidate instead. */
+    size_t kept;
+    if (suppress_clusters) {
+        kept = 0;
+        for (size_t i = 0; i < count; i++) {
+            if (kept > 0 &&
+                hits[i].offset <
+                hits[kept - 1].offset + (unsigned long long)CBM_CONTAINER_SIZE)
+                continue;
+            if (kept != i) hits[kept] = hits[i];
+            kept++;
+        }
+    } else {
+        kept = count; /* --all-hits: keep every candidate, already sorted */
     }
 
     free(chunk);
     *out = hits;
     *out_count = kept;
     return 0;
+}
+
+int cbm_scan_image(const char *path, unsigned long long start_byte,
+                   unsigned long long end_byte, size_t chunk_bytes,
+                   const char *const *magics, size_t nmagic,
+                   cbm_scan_hit_t **out, size_t *out_count,
+                   char *err, size_t errlen) {
+    return cbm_scan_image_ex(path, start_byte, end_byte, chunk_bytes,
+                             magics, nmagic, 1, out, out_count, err, errlen);
 }
 
 void cbm_scan_free_hits(cbm_scan_hit_t *hits) {

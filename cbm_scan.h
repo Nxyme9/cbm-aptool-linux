@@ -61,12 +61,27 @@ size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
  * to its length (caller frees with cbm_scan_free_hits). Returns -1 on error
  * with a message in err when err/errlen are non-zero. chunk_bytes must exceed
  * the 171888-byte overlap (two containers plus one LBA). Uses cbm_file_read
- * only (regular files and block devices), never cbm_file_write. */
+ * only (regular files and block devices), never cbm_file_write. Delegates to
+ * cbm_scan_image_ex with suppress_clusters = 1 (legacy dedupe). */
 int cbm_scan_image(const char *path, unsigned long long start_byte,
                    unsigned long long end_byte, size_t chunk_bytes,
                    const char *const *magics, size_t nmagic,
                    cbm_scan_hit_t **out, size_t *out_count,
                    char *err, size_t errlen);
+
+/* Identical to cbm_scan_image except for cluster suppression. With
+ * suppress_clusters != 0 (the legacy default) only the lowest offset of each
+ * group of candidates closer than one 85688-byte container is kept, so two
+ * genuinely distinct containers started close together collapse to one hit.
+ * With suppress_clusters == 0 every candidate is kept in ascending-offset
+ * order, including all candidates in that close group. The hit-array contract,
+ * error contract, bounds checks and 171888-byte chunk overlap are unchanged. */
+int cbm_scan_image_ex(const char *path, unsigned long long start_byte,
+                      unsigned long long end_byte, size_t chunk_bytes,
+                      const char *const *magics, size_t nmagic,
+                      int suppress_clusters,
+                      cbm_scan_hit_t **out, size_t *out_count,
+                      char *err, size_t errlen);
 
 /* Free a hit array returned by cbm_scan_image (safe on NULL). */
 void cbm_scan_free_hits(cbm_scan_hit_t *hits);

@@ -124,6 +124,27 @@ else
     run_case container-pe-flag "$PE_PATH" "$PE_LINE" "$CONTAINER_OK" container "$FIXTURE" --pe-crypto
 fi
 
+# --all-hits is scan-only: other modes and a bare flag are usage errors (exit 2).
+TEST all-hits-outside-scan
+all_hits_out="$SCRATCH/all-hits-outside-scan.out"
+if "$TOOL" container "$FIXTURE" --all-hits >"$all_hits_out" 2>&1; then
+    FAIL_CASE 'container --all-hits unexpectedly exited 0'
+elif [ "$?" -ne 2 ]; then
+    FAIL_CASE 'container --all-hits did not exit 2'
+else
+    PASS
+fi
+
+TEST all-hits-no-mode
+all_hits_bare_out="$SCRATCH/all-hits-no-mode.out"
+if "$TOOL" --all-hits >"$all_hits_bare_out" 2>&1; then
+    FAIL_CASE 'bare --all-hits unexpectedly exited 0'
+elif [ "$?" -ne 2 ]; then
+    FAIL_CASE 'bare --all-hits did not exit 2'
+else
+    PASS
+fi
+
 # TUI row: missing device/image path is a usage error (exit 2).
 TEST tui-no-device
 tui_out="$SCRATCH/tui-no-device.out"

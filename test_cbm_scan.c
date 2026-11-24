@@ -81,6 +81,30 @@ static int sha_matches(const cbm_scan_hit_t *hit, const unsigned char *container
     return memcmp(hit->sha256, want, sizeof(want)) == 0;
 }
 
+/* Body for the close-container fixture. Interior 64-byte groups are only
+ * 39/64 printable, below the 80% prefix/edge screen, so shifted windows from
+ * whole CBC blocks inside either container are rejected. The first and last
+ * 64 bytes are fully printable (true container starts/ends pass the gate);
+ * the 81520-81600 band is where the EARLIER container's tail looks into the
+ * LATER one when the starts are 4096 bytes apart. Deterministic, non-periodic. */
+static void fill_close_body(unsigned char *body, size_t len) {
+    unsigned int s = 0x5eed1234u;
+    for (size_t i = 0; i < len; i++) {
+        s = s * 1664525u + 1013904223u;
+        unsigned int r = s >> 24;
+        int printable = (i < 64u || i >= len - 64u ||
+                         (i >= 81520u && i < 81600u) || (i % 64u) < 39u);
+        body[i] = printable ? (unsigned char)(0x41u + (r % 26u))
+                            : (unsigned char)(0x80u + (r % 0x40u));
+    }
+}
+
+static int make_close_container(unsigned char *out, unsigned char header) {
+    fill_close_body(out + CBM_HEADER_SIZE, BODY_LEN);
+    out[0] = header;
+    return cbm_cbc_encrypt(out + CBM_HEADER_SIZE, BODY_LEN, cbm_fuzz_tea_key);
+}
+
 static int scan(const char *path, unsigned long long start,
                 unsigned long long end, size_t chunk,
                 const char *const *magics, size_t nmagic,
@@ -89,6 +113,20 @@ static int scan(const char *path, unsigned long long start,
     err[0] = '\0';
     int rc = cbm_scan_image(path, start, end, chunk, magics, nmagic,
                             hits, count, err, sizeof(err));
+    if (rc != 0) printf("[err: %s] ", err);
+    return rc;
+}
+
+static int scan_ex(const char *path, unsigned long long start,
+                   unsigned long long end, size_t chunk,
+                   const char *const *magics, size_t nmagic,
+                   int suppress_clusters,
+                   cbm_scan_hit_t **hits, size_t *count) {
+    char err[256];
+    err[0] = '\0';
+    int rc = cbm_scan_image_ex(path, start, end, chunk, magics, nmagic,
+                               suppress_clusters, hits, count,
+                               err, sizeof(err));
     if (rc != 0) printf("[err: %s] ", err);
     return rc;
 }
@@ -409,6 +447,53 @@ static void test_shifted_window_suppressed(void) {
     if (ok) PASS(); else FAIL("single container must yield exactly one hit");
 }
 
+/* Two structurally valid containers start 4096 bytes apart (less than one
+ * 85688-byte container). The default scanner collapses the cluster to the
+ * lower start; opt-in exhaustive mode must report both starts, in order. */
+static void test_close_containers_all_hits(void) {
+    TEST("cbm_scan_image_ex: close containers collapsed by default, kept with --all-hits");
+    char path[512];
+    path_of(path, sizeof(path), "close.img");
+    const unsigned long long a = 4ULL * LBA;
+    const unsigned long long b = a + 4096ULL;
+    const size_t img_len = (size_t)(b + CBM_CONTAINER_SIZE + LBA);
+    unsigned char *img = (unsigned char *)malloc(img_len);
+    cbm_scan_hit_t *hits = NULL;
+    size_t n = 0;
+    int ok = (img != NULL);
+    if (ok) {
+        fill_filler(img, img_len);
+        ok = (make_close_container(img + a, 0x5a) == 0 &&
+              make_close_container(img + b, 0xa5) == 0);
+    }
+    if (ok) ok = (write_image(path, img, img_len) == 0);
+    if (ok) {
+        int rc = scan(path, 0, (unsigned long long)img_len - 1u,
+                      4u * CBM_CONTAINER_SIZE, NULL, 0, &hits, &n);
+        ok = (rc == 0 && n == 1 && hits[0].offset == a &&
+              sha_matches(&hits[0], img + a));
+        if (!ok) printf("[default n=%zu] ", n);
+    }
+    cbm_scan_free_hits(hits);
+    hits = NULL;
+    n = 0;
+    if (ok) {
+        int rc = scan_ex(path, 0, (unsigned long long)img_len - 1u,
+                         4u * CBM_CONTAINER_SIZE, NULL, 0, 0, &hits, &n);
+        ok = (rc == 0 && n == 2 &&
+              hits[0].offset == a && hits[1].offset == b &&
+              hits[0].header == 0x5a && hits[1].header == 0xa5 &&
+              sha_matches(&hits[0], img + a) &&
+              sha_matches(&hits[1], img + b));
+        if (!ok) printf("[all-hits n=%zu off0=%llu off1=%llu] ", n,
+                        n > 0 ? hits[0].offset : 0ULL,
+                        n > 1 ? hits[1].offset : 0ULL);
+    }
+    cbm_scan_free_hits(hits);
+    free(img);
+    if (ok) PASS(); else FAIL("expected 1 default hit and 2 exhaustive hits at A and B");
+}
+
 /* chunk_bytes <= overlap underflows the stride in the pre-fix walker; the
  * guard must reject with an error and leave no partial results. Empty image
  * keeps the boundary probes fast and avoids the pre-fix stride==0 loop. */
@@ -472,6 +557,7 @@ int main(void) {
     test_short_image();
     test_back_to_back_containers();
     test_shifted_window_suppressed();
+    test_close_containers_all_hits();
     test_chunk_size_guard();
 
     printf("\nScratch fixtures: %s\n", g_root);
