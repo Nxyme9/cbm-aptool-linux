@@ -10,8 +10,7 @@ TARGET = cbm-tool
 CLI = pe-call
 TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui
 
-# PE path overridable via CBM_PE_PATH env var; defaults to the APTool location.
-PE ?= /tmp/opencode/ap.exe
+# PE path is supplied at runtime through CBM_PE_PATH; no build-time default.
 
 all: $(TARGET) $(CLI) $(TESTS)
 

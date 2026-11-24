@@ -50,7 +50,6 @@ static void test_compute_hlen(void) {
 static void test_cbc_odd_length(void) {
     TEST("cbm_cbc roundtrip 85687 bytes (non-multiple of 8)");
     const char *pe_path = getenv("CBM_PE_PATH");
-    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
     if (tea_init(pe_path) != 0) {
         FAIL("tea_init failed");
         return;

@@ -14,7 +14,6 @@
 #include <strings.h>
 #include <sys/mman.h>
 
-#define DEFAULT_PE_PATH "/tmp/opencode/ap.exe"
 #define DOS_HEADER_SIZE 64u
 #define PE_SIG_SIZE 4u
 #define COFF_HEADER_SIZE 20u
@@ -197,7 +196,11 @@ int pe_load(pe_image_t **img, const char *path, const pe_import_hook_t *hooks) {
     }
     if (!path || !*path) {
         const char *env = getenv("CBM_PE_PATH");
-        path = (env && *env) ? env : DEFAULT_PE_PATH;
+        if (!env || !*env) {
+            pe_error("CBM_PE_PATH is not set; an explicit PE path is required");
+            return -1;
+        }
+        path = env;
     }
 
     pe = read_file(path, &n);

@@ -5,7 +5,7 @@
 set -u
 
 TOOL=${CBM_TOOL:-./cbm-tool}
-PE_PATH=${CBM_PE_PATH:-/tmp/opencode/ap.exe}
+PE_PATH=${CBM_PE_PATH:-}
 NATIVE_LINE='Crypto backend: native (clean-room)'
 PE_LINE='Crypto backend: PE harness (cross-check)'
 CONTAINER_OK='Container mode: crypto roundtrip OK'
@@ -84,11 +84,39 @@ printf '=== CLI Backend Selection Tests ===\n'
 run_case native-selftest "$MISSING_PE" "$NATIVE_LINE" 'All systems operational.' --native-crypto
 run_case container-native-flag "$MISSING_PE" "$NATIVE_LINE" "$CONTAINER_OK" container "$FIXTURE" --native-crypto
 
-if [ ! -f "$PE_PATH" ]; then
+# PE is an explicit opt-in: with no CBM_PE_PATH the tool must fail loudly,
+# never fall back to a vendor binary path compiled into the code.
+TEST pe-no-env
+pe_no_env_out="$SCRATCH/pe-no-env.out"
+if env -u CBM_PE_PATH "$TOOL" --pe-crypto >"$pe_no_env_out" 2>&1; then
+    FAIL_CASE 'unset CBM_PE_PATH unexpectedly exited 0'
+elif ! grep -Fq 'CBM_PE_PATH' "$pe_no_env_out"; then
+    FAIL_CASE 'error did not name CBM_PE_PATH'
+else
+    PASS
+fi
+
+TEST native-bogus-pe
+native_bogus_out="$SCRATCH/native-bogus-pe.out"
+if CBM_PE_PATH="$MISSING_PE" "$TOOL" --native-crypto >"$native_bogus_out" 2>&1 &&
+   grep -Fqx "$NATIVE_LINE" "$native_bogus_out"; then
+    PASS
+else
+    FAIL_CASE 'native backend failed with a bogus PE path'
+fi
+
+if [ -z "$PE_PATH" ]; then
+    pe_skip_reason='CBM_PE_PATH not set'
+elif [ ! -f "$PE_PATH" ]; then
+    pe_skip_reason="PE $PE_PATH not present"
+else
+    pe_skip_reason=
+fi
+if [ -n "$pe_skip_reason" ]; then
     TEST pe-selftest
-    SKIP_CASE "PE $PE_PATH not present"
+    SKIP_CASE "$pe_skip_reason"
     TEST container-pe-flag
-    SKIP_CASE "PE $PE_PATH not present"
+    SKIP_CASE "$pe_skip_reason"
 else
     run_case pe-selftest "$PE_PATH" "$PE_LINE" 'TEA roundtrip OK (64 bytes)' --pe-crypto
     # Flag after "container <path>": parse_backend_flags() must strip it

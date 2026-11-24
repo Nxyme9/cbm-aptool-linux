@@ -103,7 +103,44 @@ static int expect_rejected(const unsigned char *buf, size_t len) {
 
 static const char *real_pe_path(void) {
     const char *p = getenv("CBM_PE_PATH");
-    return (p && *p) ? p : "/tmp/opencode/ap.exe";
+    return (p && *p) ? p : NULL;
+}
+
+/* Real-PE cases are opt-in research cross-checks: skip cleanly when no path
+ * was supplied or the supplied file is absent, without counting pass/fail. */
+#define SKIP_UNLESS_REAL_PE() do {                                      \
+    const char *skip_pe_ = real_pe_path();                              \
+    if (!skip_pe_) {                                                    \
+        printf("SKIP (CBM_PE_PATH not set)\n");                         \
+        return;                                                         \
+    }                                                                   \
+    if (access(skip_pe_, F_OK) != 0) {                                  \
+        printf("SKIP (PE oracle %s not present)\n", skip_pe_);          \
+        return;                                                         \
+    }                                                                   \
+} while (0)
+
+/* No vendor binary may be inferred from a NULL path when the environment is
+ * empty; the failure must be clean and must leave *img cleared. */
+static void test_null_path_needs_env(void) {
+    const char *saved = real_pe_path();
+    pe_image_t *img = (pe_image_t *)0x1;
+    int rc;
+    TEST("NULL path rejected without CBM_PE_PATH");
+    if (unsetenv("CBM_PE_PATH") != 0) { FAIL("cannot clear CBM_PE_PATH"); return; }
+    rc = pe_load(&img, NULL, NULL);
+    if (saved && setenv("CBM_PE_PATH", saved, 1) != 0) {
+        FAIL("cannot restore CBM_PE_PATH");
+        return;
+    }
+    if (rc == 0) {
+        if (img) pe_unload(img);
+        FAIL("NULL path accepted without CBM_PE_PATH");
+    } else if (img != NULL) {
+        FAIL("img not cleared");
+    } else {
+        PASS();
+    }
 }
 
 static void hook_noop(void) { }
@@ -123,6 +160,7 @@ static void test_hooks_accepted(void) {
     pe_import_hook_t hooks[3];
     pe_image_t *img = NULL;
     TEST("terminated import hook array accepted");
+    SKIP_UNLESS_REAL_PE();
     hooks[0].dll = "KERNEL32.dll";
     hooks[0].name = "Sleep";
     hooks[0].fn = hook_noop;
@@ -143,6 +181,7 @@ static void test_hook_scan_bounded(void) {
     pe_image_t *img = NULL;
     size_t i;
     TEST("unterminated import hook array scan is bounded");
+    SKIP_UNLESS_REAL_PE();
     if (!hooks) { FAIL("out of memory"); return; }
     for (i = 0; i < PE_MAX_IMPORT_HOOKS; i++) {
         hooks[i].dll = "KERNEL32.dll";
@@ -163,6 +202,7 @@ static void test_load_real_pe(void) {
     pe_image_t *img = NULL;
     void *p;
     TEST("load real PE at fixed ImageBase");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
         FAIL("pe_load failed");
         return;
@@ -275,6 +315,7 @@ static void test_section_raw_out_of_bounds(void) {
 static void test_second_load_rejected(void) {
     pe_image_t *a = NULL, *b = (pe_image_t *)0x1;
     TEST("second concurrent load rejected");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&a, real_pe_path(), NULL) != 0 || !a) { FAIL("first pe_load failed"); return; }
     if (pe_load(&b, real_pe_path(), NULL) == 0) {
         FAIL("second pe_load accepted");
@@ -290,6 +331,7 @@ static void test_second_load_rejected(void) {
 static void test_unload_allows_reload(void) {
     pe_image_t *a = NULL, *b = NULL;
     TEST("unload then reload succeeds; double unload harmless");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&a, real_pe_path(), NULL) != 0 || !a) { FAIL("first pe_load failed"); return; }
     pe_unload(a);
     pe_unload(a);               /* must not munmap twice */
@@ -302,6 +344,7 @@ static void test_unload_allows_reload(void) {
 static void test_rva_out_of_range(void) {
     pe_image_t *img = NULL;
     TEST("out-of-range RVA returns NULL");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) { FAIL("pe_load failed"); return; }
     if (pe_rva_to_va(img, MAPSZ) != NULL || pe_rva_to_va(img, 0xffffffffu) != NULL) {
         FAIL("out-of-range RVA accepted");
@@ -318,6 +361,7 @@ static void test_base_already_mapped(void) {
     void *squatter;
     pe_image_t *img = (pe_image_t *)0x1;
     TEST("pre-mapped ImageBase rejected");
+    SKIP_UNLESS_REAL_PE();
     squatter = mmap((void *)BASE, MAPSZ, PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
     if (squatter == MAP_FAILED) { FAIL("could not reserve ImageBase for probe"); return; }
@@ -350,6 +394,7 @@ static void test_golden_encrypt_via_pelib(void) {
     };
 
     TEST("golden TEA encrypt via pe_call_void");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
         FAIL("pe_load failed"); return;
     }
@@ -391,6 +436,7 @@ static void test_golden_decrypt_roundtrip(void) {
     uint32_t args[3];
 
     TEST("golden TEA decrypt roundtrip via pe_call_void");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
         FAIL("pe_load failed"); return;
     }
@@ -408,13 +454,12 @@ static void test_golden_decrypt_roundtrip(void) {
     pe_unload(img);
 }
 
-static void test_export_lookup(void) {
+static void test_export_lookup_real(void) {
     pe_image_t *img = NULL;
     uint32_t rva = 0xdeadbeefu;
-    unsigned char buf[1024];
-    size_t opt = FAKE_PEOFF + 24u, sh = opt + FAKE_OPT;
 
-    TEST("export lookup: clean not-found + synthetic export resolved");
+    TEST("export lookup: clean not-found on real PE");
+    SKIP_UNLESS_REAL_PE();
     if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
         FAIL("real pe_load failed"); return;
     }
@@ -424,10 +469,18 @@ static void test_export_lookup(void) {
     if (pe_export(img, NULL, &rva) == 0) {
         FAIL("NULL export name accepted"); pe_unload(img); return;
     }
+    PASS();
     pe_unload(img);
+}
 
-    /* ap.exe has no export directory, so also exercise the found path with
-     * a tiny scratch PE (never written to the repo). */
+static void test_export_lookup_synthetic(void) {
+    pe_image_t *img = NULL;
+    uint32_t rva;
+    unsigned char buf[1024];
+    size_t opt = FAKE_PEOFF + 24u, sh = opt + FAKE_OPT;
+
+    TEST("export lookup: synthetic export resolved");
+    /* A tiny scratch PE exercises the found path without any vendor PE. */
     make_pe(buf, sizeof buf, FAKE_PEOFF, 1, FAKE_OPT);
     memcpy(buf + sh, ".text\0\0\0", 8);
     put32(buf, sh + 8, 0x400u);        /* VirtualSize */
@@ -475,6 +528,7 @@ static void test_import_hook_dispatch(void) {
     typedef void (__attribute__((stdcall)) *fn3_t)(uint32_t, uint32_t, uint32_t);
 
     TEST("import hook patched into IAT and dispatched");
+    SKIP_UNLESS_REAL_PE();
     hooks[0].dll = "COMDLG32.dll";
     hooks[0].name = "GetFileTitleA";
     hooks[0].fn = (void (*)(void))(uintptr_t)hook_stub;
@@ -503,6 +557,7 @@ static void test_import_hook_dispatch(void) {
 }
 
 int main(void) {
+    test_null_path_needs_env();
     test_load_real_pe();
     test_bad_magic();
     test_bad_pe_signature();
@@ -519,7 +574,8 @@ int main(void) {
     test_hook_scan_bounded();
     test_golden_encrypt_via_pelib();
     test_golden_decrypt_roundtrip();
-    test_export_lookup();
+    test_export_lookup_real();
+    test_export_lookup_synthetic();
     test_import_hook_dispatch();
 #ifndef __SANITIZE_ADDRESS__
     test_base_already_mapped();

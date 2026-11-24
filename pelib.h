@@ -21,7 +21,7 @@ typedef struct pe_import_hook {
     void (*fn)(void);
 } pe_import_hook_t;
 
-/* Load path (or CBM_PE_PATH, or /tmp/opencode/ap.exe when path is NULL/empty).
+/* Load path (or CBM_PE_PATH when path is NULL/empty; no default path).
  * Returns 0 with *img set, or -1 with *img cleared. Fails if another image is
  * already loaded or if PE_BASE is occupied by somebody else. */
 int pe_load(pe_image_t **img, const char *path, const pe_import_hook_t *hooks);

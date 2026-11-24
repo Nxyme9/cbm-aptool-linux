@@ -8,7 +8,6 @@
 #include "cbm_backend.h"
 
 #define KEY TEA_NATIVE_KEY
-#define PE_PATH "/tmp/opencode/ap.exe"
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -16,6 +15,11 @@ static int tests_failed = 0;
 #define TEST(name) printf("TEST: %s ... ", name)
 #define PASS() do { printf("PASS\n"); tests_passed++; } while (0)
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); tests_failed++; } while (0)
+
+static const char *pe_path_from_env(void) {
+    const char *p = getenv("CBM_PE_PATH");
+    return (p && *p) ? p : NULL;
+}
 
 static void to_hex(const unsigned char *buf, size_t len, char *out) {
     static const char digits[] = "0123456789abcdef";
@@ -125,12 +129,17 @@ static void test_backend_flag_parsing(void) {
 }
 
 static void test_selfcheck_when_pe_present(void) {
+    const char *pe_path = pe_path_from_env();
     TEST("PE oracle equivalence");
-    if (access(PE_PATH, F_OK) != 0) {
-        printf("SKIP (PE oracle %s not present)\n", PE_PATH);
+    if (!pe_path) {
+        printf("SKIP (CBM_PE_PATH not set)\n");
         return;
     }
-    if (tea_native_selfcheck(PE_PATH) != 0) { FAIL("native/PE outputs differ"); return; }
+    if (access(pe_path, F_OK) != 0) {
+        printf("SKIP (PE oracle %s not present)\n", pe_path);
+        return;
+    }
+    if (tea_native_selfcheck(pe_path) != 0) { FAIL("native/PE outputs differ"); return; }
     PASS();
 }
 

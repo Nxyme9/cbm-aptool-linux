@@ -14,6 +14,7 @@
  * state 0x531328. PE functions use __stdcall (callee cleans stack).
  */
 #define _GNU_SOURCE
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -76,10 +77,12 @@ int tea_init(const char *pe_path) {
         return 0;
     }
 
-    /* PE backend: an explicit path is required — no silent fallback to a
-     * default image when the caller asked for PE and supplied nothing.
-     * pe_load handles file access, bounds checks and the fixed-base map. */
-    if (!pe_path || !pe_path[0]) return -1;
+    /* PE backend: an explicit path is required (via pe_path or CBM_PE_PATH) —
+     * no silent fallback to a default image when the caller asked for PE. */
+    if (!pe_path || !pe_path[0]) {
+        pe_path = getenv("CBM_PE_PATH");
+        if (!pe_path || !pe_path[0]) return -1;
+    }
     if (pe_load(&g_pe_img, pe_path, NULL) != 0) {
         g_pe_img = NULL;
         return -1;

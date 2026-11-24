@@ -90,11 +90,19 @@ static void print_backend(void) {
         printf("Crypto backend: native (clean-room)\n");
 }
 
+/* PE is an explicit opt-in: the only path comes from CBM_PE_PATH; there is no
+ * compiled-in vendor default. Native mode never needs this value. */
+static const char *pe_path_from_env(void) {
+    const char *p = getenv("CBM_PE_PATH");
+    return (p && *p) ? p : NULL;
+}
+
 /* PE mode only: report whether the clean-room cipher matches the vendor
  * oracle. Runs BEFORE tea_init() because the selfcheck maps and unmaps the PE
  * at 0x400000 itself and would otherwise clobber the live backend mapping. */
 static void print_pe_selfcheck(const char *pe_path) {
-    if (cbm_backend_get() != CBM_BACKEND_PE || access(pe_path, F_OK) != 0)
+    if (!pe_path || cbm_backend_get() != CBM_BACKEND_PE ||
+        access(pe_path, F_OK) != 0)
         return; /* a missing PE is reported by tea_init() as a hard error */
     printf("PE self-check: %s\n",
            tea_native_selfcheck(pe_path) == 0
@@ -105,8 +113,11 @@ static void print_pe_selfcheck(const char *pe_path) {
 static int selftest(void) {
     printf("=== Self-Test ===\n");
     print_backend();
-    const char *pe_path = getenv("CBM_PE_PATH");
-    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    const char *pe_path = pe_path_from_env();
+    if (cbm_backend_get() == CBM_BACKEND_PE && !pe_path) {
+        fprintf(stderr, "Error: --pe-crypto requires CBM_PE_PATH (no vendor binary default)\n");
+        return 1;
+    }
     print_pe_selfcheck(pe_path);
     if (tea_init(pe_path) != 0) {
         if (cbm_backend_get() == CBM_BACKEND_PE)
@@ -345,8 +356,11 @@ static int container_mode(int argc, char **argv) {
     if (dump_plain) printf("Dump plaintext: %s\n", dump_plain);
     if (inject) printf("Inject plaintext: %s\n", inject);
 
-    const char *pe_path = getenv("CBM_PE_PATH");
-    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    const char *pe_path = pe_path_from_env();
+    if (cbm_backend_get() == CBM_BACKEND_PE && !pe_path) {
+        fprintf(stderr, "Error: --pe-crypto requires CBM_PE_PATH (no vendor binary default)\n");
+        return 1;
+    }
     if (cbm_backend_get() == CBM_BACKEND_PE)
         printf("Loading TEA cores from PE: %s\n", pe_path);
     print_pe_selfcheck(pe_path);
@@ -702,8 +716,11 @@ static int fuzz_mode(int argc, char **argv) {
         return 2;
     }
 
-    const char *pe_path = getenv("CBM_PE_PATH");
-    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    const char *pe_path = pe_path_from_env();
+    if (cbm_backend_get() == CBM_BACKEND_PE && !pe_path) {
+        fprintf(stderr, "Error: --pe-crypto requires CBM_PE_PATH (no vendor binary default)\n");
+        return 1;
+    }
     printf("=== Fuzz Mode: %s ===\n", path);
     print_backend();
     if (cbm_backend_get() == CBM_BACKEND_PE)
@@ -860,8 +877,11 @@ static int scan_mode(int argc, char **argv) {
         end_lba * (unsigned long long)CBM_SECTOR_SIZE +
         (unsigned long long)(CBM_SECTOR_SIZE - 1);
 
-    const char *pe_path = getenv("CBM_PE_PATH");
-    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    const char *pe_path = pe_path_from_env();
+    if (cbm_backend_get() == CBM_BACKEND_PE && !pe_path) {
+        fprintf(stderr, "Error: --pe-crypto requires CBM_PE_PATH (no vendor binary default)\n");
+        return 1;
+    }
     printf("=== Scan Mode: %s ===\n", path);
     print_backend();
     if (cbm_backend_get() == CBM_BACKEND_PE)
