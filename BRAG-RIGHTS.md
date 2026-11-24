@@ -69,4 +69,4 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. Current shipped tool: 40/40 tests, MIT, `5957179`.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 53/53 tests, MIT.

@@ -78,11 +78,12 @@ sequences and golden vectors.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 48/48 PASS
-across nine test suites (tea 5, tea_native 8, cbm 5, paced 5, usb_mass 3,
-layout 5, nand 3, cbm_file 5, cbm_inspect 9). The `tea_native` PE-oracle
-equivalence test skips (not fails) when no PE is supplied; the other 47
-tests need no vendor binary.
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 53/53 PASS
+across ten suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
+layout 5, nand 3, cbm_file 5, cbm_inspect 9, backend_cli 4). The four
+PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
+`test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; the
+other 49 tests need no vendor binary.
 
 ## Device validation
 

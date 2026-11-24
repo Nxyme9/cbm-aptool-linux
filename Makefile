@@ -44,10 +44,14 @@ test_cbm_file: test_cbm_file.c cbm_file.c paced_write.c
 test_cbm_inspect: test_cbm_inspect.c cbm_inspect.c
 	$(CC) $(CFLAGS) -o $@ test_cbm_inspect.c cbm_inspect.c $(LDFLAGS)
 
-test: $(TESTS)
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect
+test: $(TESTS) $(TARGET)
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && sh ./test_backend_cli.sh
+
+# CLI-level backend selection: no device access; fixtures go under /tmp/opencode.
+test-cli: $(TARGET)
+	sh ./test_backend_cli.sh
 
 clean:
 	rm -f $(TARGET) $(TESTS) *.o
 
-.PHONY: all test clean
+.PHONY: all test test-cli clean

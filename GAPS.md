@@ -38,7 +38,8 @@ crypto this repo ships.
   PE oracle. The container format (85688 B, byte-0 header + TEA body) is
   implemented.
 - **Host evidence:** `tea_native.{h,c}`, `tea_crypto.{h,c}` (dispatcher),
-  `test_tea` (5/5), `test_tea_native` (8/8), `cbm_container` (5/5).
+  `test_tea` (6/6), `test_tea_native` (8/8), `cbm_container` (5/5),
+  `test_backend_cli.sh` (4/4).
 - **What would close it:** identify the correct key derivation (possibly
   tied to controller identity / serial) or unpack the DLL by other means.
 

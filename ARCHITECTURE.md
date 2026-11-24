@@ -2,8 +2,8 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(48/48 across nine suites) and the real-device validation mode
-(`cbm-tool <blockdev>`).
+(53/53 across ten suites, including CLI backend selection) and the
+real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
@@ -207,6 +207,7 @@ match. The PE remains the validation oracle, not a runtime dependency.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool` plus
-nine test binaries. All 48 tests pass across nine suites (`test_tea` 5,
-`test_tea_native` 8, `test_cbm` 5, `test_paced` 5, `test_usb_mass` 3,
-`test_layout` 5, `test_nand` 3, `test_cbm_file` 5, `test_cbm_inspect` 9).
+nine test binaries and one shell CLI suite. All 53 tests pass across ten suites
+(`test_tea` 6, `test_tea_native` 8, `test_cbm` 5, `test_paced` 5,
+`test_usb_mass` 3, `test_layout` 5, `test_nand` 3, `test_cbm_file` 5,
+`test_cbm_inspect` 9, `test_backend_cli.sh` 4).
