@@ -1,0 +1,81 @@
+/* cbm_scan.h - read-only, offline CBM container forensic scanner
+ *
+ * Detection is two-stage: candidate offsets come from (a) an optional
+ * case-sensitive raw magic-string search and (b) an optional structural probe
+ * at every 512-byte-aligned ABSOLUTE offset; each candidate is then subjected
+ * to a full 85688-byte parse, TEA decrypt and HEURISTIC plausibility gate
+ * (structural candidates get a cheap decrypted-prefix screen first; magic
+ * candidates are never screened out before the full gate). The gate also
+ * anchors container boundaries via decrypted head/tail printable density,
+ * because this cipher can self-synchronise on shifted windows.
+ * Hits are CANDIDATES, never "confirmed containers": no magic value is known
+ * for this format (docs/container-format.md:64), so "cbmv1001" and any other
+ * configured magic are UNVERIFIED and purely advisory. Do not claim
+ * completeness: only 512-byte-aligned starts are probed structurally.
+ *
+ * Never writes to the scanned image or device. All reads are bounded by the
+ * buffer length or the requested absolute byte range; offsets are 64-bit.
+ */
+#ifndef CBM_SCAN_H
+#define CBM_SCAN_H
+
+#include <stddef.h>
+#include <stdio.h>
+
+/* One candidate container. Offsets are absolute byte offsets in the image;
+ * token_offsets are relative to the start of the DECRYPTED body. Tokens are
+ * NUL-terminated printable runs (0x20-0x7e, length >= 4, truncated to 63
+ * characters) from the decrypted body, at most 8, in ascending body order.
+ * sha256 is the digest of the ENCRYPTED 85688-byte container. */
+typedef struct {
+    unsigned long long offset;
+    unsigned char header;
+    double entropy;
+    unsigned char sha256[32];
+    char tokens[8][64];
+    unsigned long long token_offsets[8];
+    size_t token_count;
+} cbm_scan_hit_t;
+
+/* Scan one contiguous buffer. Returns the number of hits written, capped at
+ * max; 0 when buf or out is NULL, max is 0, or len is shorter than one
+ * container. base_offset is the buffer's absolute byte offset (it only affects
+ * alignment and reported hit offsets). `magics` is an array of nmagic NUL-
+ * terminated strings matched case-sensitively against the raw container
+ * window; a NULL/0 magic list means no magic candidates. When `structural` is
+ * non-zero every 512-byte-aligned absolute offset is also probed. Never reads
+ * past buf+len. Crypto must be initialized; this calls tea_init(NULL) if it is
+ * not already ready. */
+size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
+                       const char *const *magics, size_t nmagic,
+                       int structural, unsigned long long base_offset,
+                       cbm_scan_hit_t *out, size_t max);
+
+/* Scan the inclusive absolute byte range [start_byte, end_byte] of path in
+ * chunk_bytes-sized chunks that overlap by 2 * 85688 + 512 = 171888 bytes
+ * (two containers plus one LBA), so a container straddling any chunk boundary
+ * is parsed in full and the overlap is wide enough to hold a whole earlier
+ * container for dedupe. A container is reported only when its whole 85688
+ * bytes lie inside the requested range. On success
+ * returns 0, sets *out to a malloc'd ascending-offset hit array and *out_count
+ * to its length (caller frees with cbm_scan_free_hits). Returns -1 on error
+ * with a message in err when err/errlen are non-zero. chunk_bytes must exceed
+ * one container. Uses cbm_file_read only (regular files and block devices),
+ * never cbm_file_write. */
+int cbm_scan_image(const char *path, unsigned long long start_byte,
+                   unsigned long long end_byte, size_t chunk_bytes,
+                   const char *const *magics, size_t nmagic,
+                   cbm_scan_hit_t **out, size_t *out_count,
+                   char *err, size_t errlen);
+
+/* Free a hit array returned by cbm_scan_image (safe on NULL). */
+void cbm_scan_free_hits(cbm_scan_hit_t *hits);
+
+/* Print one deterministic, locale-independent row per hit to out:
+ * "offset header %u.%06u sha256hex token_count [offset:token]...". Entropy is
+ * fixed-point with exactly six decimals after a literal '.', never %.6f.
+ * Hits are printed in the order supplied (ascending offset from
+ * cbm_scan_image). No-op when out is NULL. */
+void cbm_scan_print(FILE *out, const cbm_scan_hit_t *hits, size_t n);
+
+#endif /* CBM_SCAN_H */
