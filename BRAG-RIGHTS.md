@@ -15,7 +15,7 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 | # | Idea | What it proves | Effort |
 |---|---|---|---|
 | 5A | **Clean-room TEA** | Reimplement the vendor cipher in pure C, byte-identical to the PE oracle. Tool runs with **zero** `ap.exe`. | S |
-| 5B | **Forensic scanner** | Sweep all 500 GiB for hidden `cbmv1001` containers, carve + JSON report. Needle in a haystack. | S |
+| 5B | **Forensic scanner** | Shipped in Wave 5B: read-only structural sweep, carve + deterministic JSON report. Magic (`cbmv1001`) is **UNVERIFIED**; hits are candidates, and distinct containers < 85688 bytes apart cannot both be reported. | S |
 | 5C | **Decoder + fuzz lab** | `diff` two containers, seeded mutation fuzzing, and an honest field map of the undocumented format. Shipped in Wave 5C: `docs/container-format.md` marks interpretations **inferred**. | M |
 | 5D | **Doctor + live TUI** | Repair corrupted MBR/DJ layout behind `--repair-mbr --yes --backup`, plus a terminal dashboard. | M |
 
@@ -69,4 +69,4 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 99/99 checks across fourteen suites, MIT.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 113/113 checks across sixteen suites, MIT.

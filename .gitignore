@@ -35,6 +35,7 @@ test_cbm_decode
 test_cbm_diff
 test_cbm_fuzz
 test_cbm_scan
+test_cbm_scan_report
 test_tea_native
 test_pelib
 pe-call

@@ -40,8 +40,8 @@ crypto this repo ships.
 - **Host evidence:** `tea_native.{h,c}`, `tea_crypto.{h,c}` (dispatcher),
   `test_tea` (6/6), `test_tea_native` (8/8), `cbm_container` (5/5),
   `test_pelib` (19/19), `test_backend_cli.sh` (4/4), `test_cbm_decode`
-  (11/11), `test_cbm_diff` (11/11) and `test_cbm_fuzz` (5/5) — 99 checks in
-  fourteen suites total.
+  (11/11), `test_cbm_fuzz` (5/5), `test_cbm_scan` (10/10) and
+  `test_cbm_scan_report` (4/4) — 113 checks in sixteen suites total.
 - **What would close it:** identify the correct key derivation (possibly
   tied to controller identity / serial) or unpack the DLL by other means.
 
@@ -75,6 +75,25 @@ crypto this repo ships.
 - **What would close it:** vendor documentation or a decrypted DLL/PE with the
   container serialiser, plus corpus evidence of real field layouts.
 
+## Gap 5 — the scanner finds candidates, not confirmed containers
+
+- **What's missing:** no vendor magic value is known (`docs/container-format.md`);
+  `cbmv1001` is **UNVERIFIED** and advisory at most. There is no oracle that
+  can certify a reported offset as a genuine vendor container.
+- **What works instead:** `cbm-tool scan` is a read-only structural probe on
+  512-byte-aligned starts, with a full 85688-byte decrypt and a heuristic
+  plausibility gate. It writes nothing unless `--carve`/`--json` is given, and
+  those paths are refused when they resolve to the source image.
+- **Known limitation:** cluster suppression keeps the lowest offset in a group
+  of hits closer than one container (85688 bytes), so **two genuinely distinct
+  containers starting less than 85688 bytes apart cannot both be reported**.
+  Only aligned starts are probed; false positives and false negatives are
+  both possible. Hits are CANDIDATES for follow-up with `container` mode,
+  never confirmed containers. Real-device scanning is a hardware-gated step,
+  not part of the automated suite.
+- **What would close it:** a recovered magic/header schema from the vendor
+  serialiser (Gap 4) and corpus evidence of real container boundaries.
+
 ## Summary
 
 | Capability | Status |
@@ -88,7 +107,8 @@ crypto this repo ships.
 | Vendor SCSI CDB set | **Not recovered** |
 | CBMUsbDisk.dll internals | **0/16 keys, not decrypted** (no longer blocks normal use) |
 | BCH ECC / balanced erase | **Firmware-internal** |
+| Forensic scanner | Read-only candidate finder (aligned starts, unproven magic, < 85688-byte separation limit) |
 
-Current suite: 99 checks in fourteen suites (94 before Wave 5C task 3, plus
-5 fuzz checks). This repo is an honest, reproducible partial RE. It is not a complete
+Current suite: 113 checks in sixteen suites (109 before Wave 5B task 2, plus
+4 scan-report checks). This repo is an honest, reproducible partial RE. It is not a complete
 protocol clone, and it is not a vendor binary redistribution.

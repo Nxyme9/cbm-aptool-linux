@@ -2,7 +2,7 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(99/99 across fourteen suites, including CLI backend selection) and the
+(113/113 across sixteen suites, including CLI backend selection) and the
 real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
@@ -94,9 +94,17 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
 - `cbm-tool fuzz <container> --mutate N --rounds N --seed N [--out <dir>]`:
   deterministic offline mutation corpus via `cbm_fuzz_run`; refuses block
   devices and source-as-`--out`, writes only under `--out`.
+- `cbm-tool scan <device> [--start LBA] [--end LBA] [--chunk MiB] [--carve <dir>]
+  [--json <report>]`: read-only forensic candidate scan via `cbm_scan_image`
+  (`NULL, 0` magics — structural probe only), optional report writers in
+  `cbm_scan_report.{h,c}`. No source write path; `--carve`/`--json` are
+  pre-flighted with `cbm_scan_report_check_output` (realpath string match or
+  `st_dev`/`st_ino`) and write only to the explicit paths. JSON field order is
+  `offset`, `header`, `entropy`, `sha256`, `tokens`; entropy is integer
+  fixed-point with a literal `.`, so output is locale-independent.
 - Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
-  → `diff` → `fuzz` → `verify_device(argv[1])`. Exit codes: 0 ok, 1 runtime
-  error, 2 usage error for `diff`/`fuzz`.
+  → `diff` → `fuzz` → `scan` → no-args self-test → `verify_device(argv[1])`.
+  Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`.
 - PE path overridable via `CBM_PE_PATH` env var (default
   `/tmp/opencode/ap.exe`). Only used by the opt-in PE backend; the native
   default ignores it.
@@ -222,6 +230,28 @@ match. The PE remains the validation oracle, not a runtime dependency.
 - Format honesty: [docs/container-format.md](docs/container-format.md) labels
   every interpretation **inferred** and lists what remains unknown.
 
+## 9c. Read-only scanner and report writers (`cbm_scan.{h,c}`, `cbm_scan_report.{h,c}`)
+
+- `cbm_scan.{h,c}` (10/10): 512-byte-aligned structural probe → full
+  85688-byte TEA decrypt → heuristic plausibility gate. `cbm_scan_image`
+  reads in chunks with 171888-byte overlap, dedupes shifted/overlapping
+  candidates by keeping the lowest offset per cluster, and returns hits
+  ascending by offset. Only `cbm_file_read` is used; no write path.
+- `cbm_scan_report.{h,c}` (4/4): JSON array writer with fixed field order,
+  escaped token strings, 64 lowercase hex sha256 digits and fixed-point
+  entropy (`%u.%06u` via integer math, never `%.6f`); carve writer which reads
+  exactly `CBM_CONTAINER_SIZE` bytes per hit and writes
+  `<dir>/hit-NNN-<offset>.cbm` (001-based) via stdio, creating `dir` with
+  `mkdir(0755)`. Shared `cbm_scan_report_check_output` refuses aliases of the
+  source by `realpath` match, identical `st_dev`/`st_ino`, or a source-as-parent
+  path; no output is opened before that guard passes.
+- Honesty: no magic value is known (`docs/container-format.md`); `cbmv1001`
+  is **UNVERIFIED** and only advisory. Detection is structural-only in the
+  CLI (`NULL, 0` magics). Hits are **CANDIDATES**, not confirmed containers;
+  only aligned starts are probed, and two genuinely distinct containers
+  starting less than 85688 bytes apart cannot both be reported. Real-device
+  scanning is hardware-gated, not part of the suite.
+
 ## 10. PE loader library (`pelib.{h,c}`)
 
 One reusable fixed-base PE loader now serves the PE backend, the generic
@@ -266,8 +296,9 @@ section-copy loop.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool`, the
-`pe-call` CLI, thirteen test binaries and one shell CLI suite. All 99 checks
-pass across fourteen suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
+`pe-call` CLI, fifteen test binaries and one shell CLI suite. All 113 checks
+pass across sixteen suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
 `test_paced` 5, `test_usb_mass` 3, `test_layout` 5, `test_nand` 3,
 `test_cbm_file` 5, `test_cbm_inspect` 9, `test_pelib` 19, `test_cbm_decode` 11,
-`test_backend_cli.sh` 4, `test_cbm_diff` 11, `test_cbm_fuzz` 5).
+`test_backend_cli.sh` 4, `test_cbm_diff` 11, `test_cbm_fuzz` 5, `test_cbm_scan`
+10, `test_cbm_scan_report` 4).

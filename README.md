@@ -82,13 +82,14 @@ sequences and golden vectors.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 99/99 PASS
-across fourteen suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 113/113 PASS
+across sixteen suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
 layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, decode 11,
-backend_cli 4, diff 11, fuzz 5). The four 5A PE-dependent cases (`tea_native`
-PE oracle, `test_tea` PE dispatch and the two `test_backend_cli.sh` PE runs)
-skip (not fail) when no PE is supplied; eleven `test_pelib` cases need the
-vendor PE and fail without it. The remaining 84 checks need no vendor binary.
+backend_cli 4, diff 11, fuzz 5, scan 10, scan_report 4). The four 5A
+PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
+`test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; eleven
+`test_pelib` cases need the vendor PE and fail without it. The remaining 88
+checks need no vendor binary.
 
 ## Device validation
 
@@ -142,6 +143,34 @@ source path or its directory. The same `--seed/--mutate/--rounds` produce
 byte-identical files. `--out` must already exist. See
 [docs/container-format.md](docs/container-format.md) for the format and its
 explicit **inferred** markers — the field map is deliberately incomplete.
+
+## Read-only forensic scan
+
+    ./cbm-tool scan <device-or-image> [--start LBA] [--end LBA] [--chunk MiB]
+                    [--carve <dir>] [--json <report.json>]
+
+`scan` sweeps an inclusive LBA range (512 bytes/LBA; `--start` defaults to 0,
+`--end` to the last LBA, `--chunk` to 8 MiB with a 1 MiB minimum) in chunks
+that overlap by 171888 bytes, and prints one deterministic row per **candidate**
+(`offset header entropy sha256 token_count [offset:token]`). It is **read-only
+by default**: no writes of any kind unless `--carve <dir>` or
+`--json <report>` is given, and those write only to the explicit local paths.
+`--carve` creates `<dir>` (mode 0755) and writes one exact 85688-byte
+`hit-NNN-<offset>.cbm` per candidate in hit order; `--json` writes one JSON
+array with fixed field order (`offset`, `header`, `entropy`, `sha256`,
+`tokens` of `{offset, text}`), lowercase hex digests and locale-independent
+fixed-point entropy (`%u.%06u`, never `%.6f`). Both refuse paths that resolve
+to the source image (same `st_dev`/`st_ino` or a `realpath` match).
+
+Detection uses the **structural probe** only: no magic list is supplied. No
+magic value is known for this format (`docs/container-format.md`), so
+`cbmv1001` and similar strings are **UNVERIFIED** and advisory at most. Hits
+are **CANDIDATES, not confirmed containers**, and false positives/negatives
+are possible: the scanner only probes 512-byte-aligned starts, and the
+duplicate-hit suppression cannot report two genuinely distinct containers
+whose starts are less than `CBM_CONTAINER_SIZE` (85688) bytes apart.
+Real-device scanning remains a hardware-gated step, not part of the automated
+suite; the tests use synthetic images only.
 
 ## PE framework
 

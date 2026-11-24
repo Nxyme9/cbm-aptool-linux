@@ -11,6 +11,10 @@
  *                            byte diff + entropy delta + heatmap, offline
  *   cbm-tool fuzz <container> --mutate N --rounds N --seed N [--out <dir>]
  *                            deterministic offline mutation corpus
+ *   cbm-tool scan <device> [--start LBA] [--end LBA] [--chunk MiB]
+ *                            [--carve <dir>] [--json <report>]
+ *                            read-only forensic candidate scan; optional
+ *                            carved containers and deterministic JSON report
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +23,10 @@
 #include <unistd.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <linux/fs.h>
 
 #include "tea_crypto.h"
 #include "cbm_backend.h"
@@ -33,6 +41,8 @@
 #include "cbm_diff.h"
 #include "cbm_decode.h"
 #include "cbm_fuzz.h"
+#include "cbm_scan.h"
+#include "cbm_scan_report.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -608,6 +618,17 @@ static void print_fuzz_usage(const char *prog) {
         prog);
 }
 
+/* Strict non-negative decimal LBA / MiB parser (64-bit, no sign, no suffix). */
+static int parse_nonneg_ull(const char *s, unsigned long long *out) {
+    if (!s || !*s || !out || s[0] == '-') return -1;
+    errno = 0;
+    char *end = NULL;
+    unsigned long long v = strtoull(s, &end, 10);
+    if (errno != 0 || !end || end == s || *end != '\0') return -1;
+    *out = v;
+    return 0;
+}
+
 /* Strict non-negative integer bounded to unsigned (the fuzz API's type). */
 static int parse_unsigned_arg(const char *s, unsigned long *out) {
     if (!s || !*s || !out) return -1;
@@ -691,13 +712,192 @@ static int fuzz_mode(int argc, char **argv) {
     return 0;
 }
 
+/* ---- read-only forensic scan mode -------------------------------------- */
+
+static void print_scan_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s scan <device|image> [--start LBA] [--end LBA] [--chunk MiB]\n"
+        "                            [--carve <dir>] [--json <report>]\n"
+        "  --start LBA   first INCLUSIVE 512-byte LBA (default 0)\n"
+        "  --end LBA     last INCLUSIVE 512-byte LBA (default: last LBA)\n"
+        "  --chunk MiB   read chunk size, minimum 1 (default 8)\n"
+        "  --carve <dir> write hit-NNN-<offset>.cbm (85688 bytes per hit)\n"
+        "  --json <rpt>  write a deterministic JSON report\n"
+        "Scan is READ-ONLY: --carve/--json write only to the explicit local paths.\n"
+        "Hits are CANDIDATES, not confirmed containers; magic is UNVERIFIED and\n"
+        "advisory, detection uses the structural probe. Exit: 0 ok, 1 runtime\n"
+        "error, 2 usage error.\n",
+        prog);
+}
+
+/* Last LBA of the image. Regular files use stat; block devices use a strictly
+ * O_RDONLY BLKGETSIZE64 capacity query. Deliberately does NOT use
+ * usb_mass_open (which opens O_RDWR): scan mode must never hold a write-capable
+ * descriptor on the device, even for a capacity probe. */
+static int image_last_lba(const char *path, unsigned long long *last_lba) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    unsigned long long bytes;
+    if (S_ISBLK(st.st_mode)) {
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) return -1;
+        int ok = (ioctl(fd, BLKGETSIZE64, &bytes) == 0 && bytes > 0);
+        close(fd);
+        if (!ok) return -1;
+    } else if (S_ISREG(st.st_mode)) {
+        bytes = (unsigned long long)st.st_size;
+    } else {
+        return -1;
+    }
+    *last_lba = bytes ? (bytes - 1ULL) / (unsigned long long)CBM_SECTOR_SIZE : 0ULL;
+    return 0;
+}
+
+/* Full-device, read-only scan. --carve and --json are the only writes and
+ * are pre-flighted against the source inode before any output is opened. */
+static int scan_mode(int argc, char **argv) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    const char *carve = NULL, *json = NULL;
+    unsigned long long start_lba = 0ULL, end_lba = 0ULL, chunk_mib = 8ULL;
+    int have_end = 0;
+
+    if (!path || !path[0]) {
+        fprintf(stderr, "Error: scan requires a device or image path\n");
+        print_scan_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--start") == 0 || strcmp(a, "--end") == 0) {
+            unsigned long long *slot = (a[2] == 's') ? &start_lba : &end_lba;
+            if (++i >= argc || parse_nonneg_ull(argv[i], slot) != 0) {
+                fprintf(stderr, "Error: %s needs a non-negative LBA\n", a);
+                print_scan_usage(argv[0]);
+                return 2;
+            }
+            if (slot == &end_lba) have_end = 1;
+        } else if (strcmp(a, "--chunk") == 0) {
+            if (++i >= argc || parse_nonneg_ull(argv[i], &chunk_mib) != 0 ||
+                chunk_mib < 1ULL) {
+                fprintf(stderr, "Error: --chunk needs a positive integer (MiB)\n");
+                print_scan_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(a, "--carve") == 0 || strcmp(a, "--json") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: %s needs a local path\n", a);
+                print_scan_usage(argv[0]);
+                return 2;
+            }
+            if (a[2] == 'c') carve = argv[i];
+            else json = argv[i];
+        } else {
+            fprintf(stderr, "Error: unknown scan option '%s'\n", a);
+            print_scan_usage(argv[0]);
+            return 2;
+        }
+    }
+    if (!have_end && image_last_lba(path, &end_lba) != 0) {
+        fprintf(stderr, "Error: cannot determine image size for '%s'\n", path);
+        return 1;
+    }
+    if (start_lba > end_lba) {
+        fprintf(stderr, "Error: --start LBA is after --end LBA\n");
+        print_scan_usage(argv[0]);
+        return 2;
+    }
+    const unsigned long long max_lba =
+        (ULLONG_MAX - (unsigned long long)(CBM_SECTOR_SIZE - 1)) /
+        (unsigned long long)CBM_SECTOR_SIZE;
+    if (start_lba > max_lba || end_lba > max_lba) {
+        fprintf(stderr, "Error: LBA exceeds the addressable byte range\n");
+        return 2;
+    }
+    if (chunk_mib > (unsigned long long)(SIZE_MAX / 1048576ULL)) {
+        fprintf(stderr, "Error: --chunk too large for this build\n");
+        return 2;
+    }
+    const size_t chunk_bytes = (size_t)(chunk_mib * 1048576ULL);
+    if (chunk_bytes <= 2u * CBM_CONTAINER_SIZE +
+                       (size_t)CBM_SECTOR_SIZE) {
+        fprintf(stderr, "Error: --chunk must exceed the scanner overlap (2 containers + 1 LBA)\n");
+        return 2;
+    }
+
+    char err[256];
+    err[0] = '\0';
+    /* Refuse aliases before opening any output; no source write path exists. */
+    if (json && cbm_scan_report_check_output(json, path, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 2;
+    }
+    if (carve && cbm_scan_report_check_output(carve, path, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 2;
+    }
+
+    const unsigned long long start_byte =
+        start_lba * (unsigned long long)CBM_SECTOR_SIZE;
+    const unsigned long long end_byte =
+        end_lba * (unsigned long long)CBM_SECTOR_SIZE +
+        (unsigned long long)(CBM_SECTOR_SIZE - 1);
+
+    const char *pe_path = getenv("CBM_PE_PATH");
+    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    printf("=== Scan Mode: %s ===\n", path);
+    print_backend();
+    if (cbm_backend_get() == CBM_BACKEND_PE)
+        printf("Loading TEA cores from PE: %s\n", pe_path);
+    printf("Range: LBA %llu-%llu (bytes %llu-%llu)\n",
+           start_lba, end_lba, start_byte, end_byte);
+    printf("Chunk: %llu MiB (%zu bytes)\n", chunk_mib, chunk_bytes);
+    puts("Detection: structural probe only; magic UNVERIFIED/advisory");
+    if (tea_init(pe_path) != 0) {
+        fprintf(stderr, "Error: failed to initialize crypto backend\n");
+        return 1;
+    }
+
+    cbm_scan_hit_t *hits = NULL;
+    size_t n = 0;
+    int rc = 1;
+    if (cbm_scan_image(path, start_byte, end_byte, chunk_bytes, NULL, 0,
+                       &hits, &n, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err[0] ? err : "scan failed");
+        goto out;
+    }
+    printf("Candidates: %zu\n", n);
+    puts("offset header entropy sha256 token_count [offset:token]...");
+    cbm_scan_print(stdout, hits, n);
+    if (json) {
+        if (cbm_scan_write_json(json, hits, n, err, sizeof(err)) != 0) {
+            fprintf(stderr, "Error: %s\n", err[0] ? err : "JSON write failed");
+            goto out;
+        }
+        printf("JSON report: %s\n", json);
+    }
+    if (carve) {
+        if (cbm_scan_carve(carve, path, hits, n, err, sizeof(err)) != 0) {
+            fprintf(stderr, "Error: %s\n", err[0] ? err : "carve failed");
+            goto out;
+        }
+        printf("Carved %zu candidate container(s) into '%s'\n", n, carve);
+    }
+    if (!json && !carve) puts("No report written (read-only default).");
+    puts("Scan complete: candidates only, not confirmed containers.");
+    rc = 0;
+out:
+    cbm_scan_free_hits(hits);
+    tea_cleanup();
+    return rc;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
-    /* Container/fuzz modes load the crypto backend themselves and must not run
-     * the selftest first (that would init/cleanup TEA twice). diff is pure
-     * byte analysis and needs no crypto at all. All three subcommands are
+    /* Container/fuzz/scan modes load the crypto backend themselves and must
+     * not run the selftest first (that would init/cleanup TEA twice). diff is
+     * pure byte analysis and needs no crypto at all. All four subcommands are
      * dispatched before the device path so nothing can be mistaken for a
      * block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
@@ -706,6 +906,8 @@ int main(int argc, char **argv) {
         return diff_mode(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "fuzz") == 0)
         return fuzz_mode(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "scan") == 0)
+        return scan_mode(argc, argv);
 
     if (selftest() != 0) return 1;
     if (argc > 1) return verify_device(argv[1]);
