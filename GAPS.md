@@ -33,9 +33,12 @@ Measured on this tree at HEAD `0ad881d`, from two fresh logs under
   `test_pelib: 10 passed, 0 failed`.
 
 Scope: 178 and 172 are sums of the `Results:` lines only. The `test_pelib`
-counts come from its own summary line and are **not** part of those sums; the
-PE-only cases that skip are reported in the `Results:` sums (4 skipped) and in
-the `test_pelib` line (11 fewer passes). Both runs end with `cli_exit=0`,
+counts come from its own summary line and are **not** part of those sums. The
+4 skipped in the no-PE `Results:` sums come entirely from the two
+`test_backend_cli.sh` `Results:` lines (2 each); the PE-only skips in
+`test_tea` and `test_tea_native` appear only as `TEST:` lines, not in those
+sums, and `test_pelib`'s skips are reflected in its separate summary line
+(11 fewer passes). Both runs end with `cli_exit=0`,
 `build_exit=0` and `make_test_exit=0`; `vendor_literal_grep_exit=1` records
 that the shipped-file grep found no vendor path literal. All fixtures are
 synthetic regular files; no real device is touched.

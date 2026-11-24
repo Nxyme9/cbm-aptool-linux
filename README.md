@@ -75,8 +75,11 @@ modes, in any position:
 `CBM_PE_PATH` is the only source of the PE path — there is no built-in default
 and no silent fallback; `--pe-crypto` without it fails with an explicit error.
 The native backend ignores it. The PE-dependent cases in `test_tea`,
-`test_tea_native`, `test_pelib` and `test_cbm` also read `CBM_PE_PATH` and skip
-when no usable PE is supplied. In PE mode the tool runs
+`test_tea_native`, `test_pelib` and `test_cbm` also read `CBM_PE_PATH`; the
+first three skip their PE-only cases when no usable PE is supplied, while
+`test_cbm` takes the native fallback and passes 5/5 in both runs. The 4 skips
+in the no-PE `Results:` sums come from `test_backend_cli.sh` (2 in each of its
+two runs). In PE mode the tool runs
 `tea_native_selfcheck()` before init and prints
 `PE self-check: PASS (native byte-identical to PE)` when the clean-room cipher
 matches the vendor oracle. See [ARCHITECTURE.md](ARCHITECTURE.md) §9 for the
@@ -314,9 +317,13 @@ There is no default path: `--pe-crypto` without `CBM_PE_PATH` fails with an
 explicit error, and the harness loads the PE at runtime without ever
 committing it.
 The PE-dependent cases in `test_tea`, `test_tea_native`, `test_pelib` and
-`test_cbm` read the same `CBM_PE_PATH` and skip when no usable PE is supplied;
-the no-PE run therefore reports 4 skipped in the `Results:` sums and a lower
-`test_pelib` count. No vendor file is moved, renamed or deleted.
+`test_cbm` read the same `CBM_PE_PATH`; the first three skip their PE-only
+cases when no usable PE is supplied, while `test_cbm` takes the native
+fallback and still passes 5/5. The 4 skipped counted in the no-PE `Results:`
+sums come from `test_backend_cli.sh` (2 in each of its two runs); the skips in
+`test_tea` and `test_tea_native` appear only as `TEST:` lines, not in their
+`Results:` lines, and `test_pelib` is reported on its own summary line (10
+passes without PE vs 21 with PE). No vendor file is moved, renamed or deleted.
 
 ## License
 
