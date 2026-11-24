@@ -25,10 +25,22 @@ static const char *pe_path_from_env(void) {
  * cases below. */
 static int pe_null_path_rejected(const char *pe_path) {
     int rc;
-    if (setenv("CBM_PE_PATH", "", 1) != 0) return 0;
+    char *saved;
+    size_t n;
+
+    /* The first setenv() invalidates getenv() storage; keep a private copy
+     * before it so the restore below never reads a dangling pointer. */
+    if (!pe_path) return 0;
+    n = strlen(pe_path) + 1;
+    saved = malloc(n);
+    if (!saved) return 0;
+    memcpy(saved, pe_path, n);
+
+    if (setenv("CBM_PE_PATH", "", 1) != 0) { free(saved); return 0; }
     rc = tea_init(NULL);
     if (rc == 0) tea_cleanup(); /* unexpected: drop the PE mapping before redo */
-    if (setenv("CBM_PE_PATH", pe_path, 1) != 0) return 0;
+    if (setenv("CBM_PE_PATH", saved, 1) != 0) { free(saved); return 0; }
+    free(saved);
     return rc != 0;
 }
 
@@ -127,7 +139,9 @@ static void test_pe_backend_dispatch(void) {
     } else if (!pe_null_path_rejected(pe_path)) {
         /* With no env path either, the PE branch must reject a NULL path. */
         why = "PE backend accepted NULL path with CBM_PE_PATH empty";
-    } else if (tea_init(pe_path) != 0 || !tea_is_ready()) {
+    /* pe_null_path_rejected() calls setenv(), which may invalidate the
+     * getenv() storage pe_path points into. Re-read the restored value. */
+    } else if (tea_init(pe_path_from_env()) != 0 || !tea_is_ready()) {
         why = "PE tea_init failed";
     } else {
         for (int i = 0; i < (int)sizeof orig; i++)

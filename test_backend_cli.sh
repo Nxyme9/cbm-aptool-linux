@@ -125,25 +125,31 @@ else
 fi
 
 # --all-hits is scan-only: other modes and a bare flag are usage errors (exit 2).
-TEST all-hits-outside-scan
-all_hits_out="$SCRATCH/all-hits-outside-scan.out"
-if "$TOOL" container "$FIXTURE" --all-hits >"$all_hits_out" 2>&1; then
-    FAIL_CASE 'container --all-hits unexpectedly exited 0'
-elif [ "$?" -ne 2 ]; then
-    FAIL_CASE 'container --all-hits did not exit 2'
-else
-    PASS
-fi
+# Each case must exit 2 and print the blanket guard's message naming --all-hits.
+reject_all_hits() {
+    label=$1
+    shift
+    out="$SCRATCH/all-hits-$label.out"
+    TEST "all-hits-$label"
+    if "$TOOL" "$@" --all-hits >"$out" 2>&1; then
+        FAIL_CASE 'unexpectedly exited 0'
+    elif [ "$?" -ne 2 ]; then
+        FAIL_CASE 'did not exit 2'
+    elif ! grep -Fq -- '--all-hits' "$out"; then
+        FAIL_CASE 'error did not name --all-hits'
+    else
+        PASS
+    fi
+}
 
-TEST all-hits-no-mode
-all_hits_bare_out="$SCRATCH/all-hits-no-mode.out"
-if "$TOOL" --all-hits >"$all_hits_bare_out" 2>&1; then
-    FAIL_CASE 'bare --all-hits unexpectedly exited 0'
-elif [ "$?" -ne 2 ]; then
-    FAIL_CASE 'bare --all-hits did not exit 2'
-else
-    PASS
-fi
+# All fixtures are synthetic files created above; no device is opened because
+# parse_backend_flags() rejects --all-hits before any subcommand dispatches.
+reject_all_hits outside-scan container "$FIXTURE"
+reject_all_hits no-mode
+reject_all_hits diff diff "$FIXTURE" "$FIXTURE"
+reject_all_hits fuzz fuzz "$FIXTURE"
+reject_all_hits heatmap heatmap "$TUI_IMG"
+reject_all_hits doctor doctor "$TUI_IMG"
 
 # TUI row: missing device/image path is a usage error (exit 2).
 TEST tui-no-device

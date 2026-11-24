@@ -226,9 +226,9 @@ size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
     return written;
 }
 
-/* Total order over absolute hit offsets. Used only by cbm_scan_image: the raw
- * per-chunk hit list is NOT ordered because consecutive chunks re-scan the
- * overlap with a higher base offset. */
+/* Total order over absolute hit offsets. Used by both cbm_scan_image and
+ * cbm_scan_image_ex: the raw per-chunk hit list is NOT ordered because
+ * consecutive chunks re-scan the overlap with a higher base offset. */
 static int hit_offset_cmp(const void *a, const void *b) {
     const cbm_scan_hit_t *ha = (const cbm_scan_hit_t *)a;
     const cbm_scan_hit_t *hb = (const cbm_scan_hit_t *)b;

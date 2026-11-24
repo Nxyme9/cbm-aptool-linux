@@ -123,16 +123,30 @@ static const char *real_pe_path(void) {
 /* No vendor binary may be inferred from a NULL path when the environment is
  * empty; the failure must be clean and must leave *img cleared. */
 static void test_null_path_needs_env(void) {
-    const char *saved = real_pe_path();
+    const char *env_path = real_pe_path();
+    char *saved = NULL;
     pe_image_t *img = (pe_image_t *)0x1;
     int rc;
     TEST("NULL path rejected without CBM_PE_PATH");
-    if (unsetenv("CBM_PE_PATH") != 0) { FAIL("cannot clear CBM_PE_PATH"); return; }
+    /* unsetenv() invalidates the getenv() pointer, so copy before clearing. */
+    if (env_path) {
+        size_t n = strlen(env_path) + 1;
+        saved = malloc(n);
+        if (!saved) { FAIL("out of memory"); return; }
+        memcpy(saved, env_path, n);
+    }
+    if (unsetenv("CBM_PE_PATH") != 0) {
+        free(saved);
+        FAIL("cannot clear CBM_PE_PATH");
+        return;
+    }
     rc = pe_load(&img, NULL, NULL);
     if (saved && setenv("CBM_PE_PATH", saved, 1) != 0) {
+        free(saved);
         FAIL("cannot restore CBM_PE_PATH");
         return;
     }
+    free(saved);
     if (rc == 0) {
         if (img) pe_unload(img);
         FAIL("NULL path accepted without CBM_PE_PATH");
@@ -177,11 +191,13 @@ static void test_hooks_accepted(void) {
 }
 
 static void test_hook_scan_bounded(void) {
-    pe_import_hook_t *hooks = calloc(PE_MAX_IMPORT_HOOKS, sizeof *hooks);
+    pe_import_hook_t *hooks;
     pe_image_t *img = NULL;
     size_t i;
     TEST("unterminated import hook array scan is bounded");
     SKIP_UNLESS_REAL_PE();
+    /* Allocate only after the opt-in skip: a no-PE run must not leak. */
+    hooks = calloc(PE_MAX_IMPORT_HOOKS, sizeof *hooks);
     if (!hooks) { FAIL("out of memory"); return; }
     for (i = 0; i < PE_MAX_IMPORT_HOOKS; i++) {
         hooks[i].dll = "KERNEL32.dll";

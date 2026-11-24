@@ -128,6 +128,19 @@ static void test_join_path_empty_leaf_copies_base(void) {
     PASS();
 }
 
+static void test_join_path_minimum_valid_tail(void) {
+    static const char base[] = "/sys/class/block";
+    char dst[sizeof(base) + 2]; /* strlen(base) + 3: '/', 1-char leaf, NUL */
+    TEST("nand_info_join_path minimum valid tail");
+    memset(dst, 'X', sizeof dst);
+    if (nand_info_join_path(dst, strlen(base) + 3, base, "x") != 0 ||
+        strcmp(dst, "/sys/class/block/x") != 0) {
+        FAIL("3-byte tail with 1-char leaf should succeed");
+        return;
+    }
+    PASS();
+}
+
 int main(void) {
     printf("=== NAND Controller Info Tests ===\n");
     test_is_chipsbank();
@@ -136,6 +149,7 @@ int main(void) {
     test_join_path_normal();
     test_join_path_base_fills_buffer();
     test_join_path_exact_fit();
+    test_join_path_minimum_valid_tail();
     test_join_path_overflow_one_byte();
     test_join_path_empty_base();
     test_join_path_null_args();
