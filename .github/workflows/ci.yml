@@ -1,0 +1,97 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# No vendor binary, no device access: all jobs use source-only build/test targets.
+jobs:
+  build-gcc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib zlib1g-dev
+      - name: Build and test (fail on any warning)
+        run: |
+          set -o pipefail
+          make clean && make 2>&1 | tee build-gcc.log
+          if grep -n 'warning:' build-gcc.log; then
+            echo '::error::compiler warning detected in gcc build'
+            exit 1
+          fi
+          make test
+
+  build-clang:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib zlib1g-dev
+      - name: Build and test with clang (-Werror)
+        env:
+          CLANG_CFLAGS: "-m32 -O2 -g -Wall -Wextra -Werror -Wformat=2 -Werror=format-security -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wvla -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2"
+        run: |
+          set -o pipefail
+          make clean && make CC=clang CFLAGS="$CLANG_CFLAGS" 2>&1 | tee build-clang.log
+          if grep -n 'warning:' build-clang.log; then
+            echo '::error::compiler warning detected in clang build'
+            exit 1
+          fi
+          make CC=clang CFLAGS="$CLANG_CFLAGS" test
+
+  asan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib zlib1g-dev
+      - name: AddressSanitizer suite
+        run: make asan
+
+  fuzz-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib zlib1g-dev
+      - name: Short fuzz smoke run
+        run: make fuzz FUZZ_SECONDS=60
+
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck test_backend_cli.sh scripts/check-counts.sh
+      # scripts/check-counts.sh is NOT run in CI: it verifies counts against
+      # fresh measured /tmp/opencode logs, and those logs are not committed.
+      - name: gitleaks (pinned release, no-git scan)
+        run: |
+          VERSION=8.28.0
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
+          /tmp/gitleaks detect --source . --no-git --redact
+      # gitleaks/gitleaks-action@v2 is the pinned-action alternative, but it
+      # scans git history and needs a license secret for org repos; the pinned
+      # CLI above keeps this workflow on GITHUB_TOKEN only.
+
+  counts-doc:
+    runs-on: ubuntu-latest
+    # Documented counts are verified locally by scripts/check-counts.sh against
+    # fresh /tmp/opencode logs. Those measured logs are not committed, so this
+    # job documents that check rather than running it in CI.
+    steps:
+      - name: Counts verification is local-only
+        run: echo "Documented counts verified locally via scripts/check-counts.sh against fresh /tmp/opencode logs."
