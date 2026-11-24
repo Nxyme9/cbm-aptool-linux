@@ -169,7 +169,10 @@ the exact input.
 rejection without buffer mutation, a 15-byte exact-allocation bounds check,
 and backend flag parsing. Its PE-oracle equivalence test compares native and
 PE ciphertext on deterministic inputs at nine lengths (8, 16, 24, 32, 64,
-15, 23, 31, 127) and skips when no PE is supplied.
+15, 23, 31, 127) and skips when no PE is supplied. The PE-oracle equivalence
+test in `test_tea_native` reads the default path `/tmp/opencode/ap.exe` only
+and does not honour `CBM_PE_PATH`; that variable relocates the tool's
+`--pe-crypto` backend only.
 
 ### 9.4 Backend-selection flow
 

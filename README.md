@@ -131,6 +131,9 @@ normal modes run the pure-C cipher and need no `ap.exe` at all. The optional
 your own legally-obtained copy of APTool (`ap.exe`) at
 `/tmp/opencode/ap.exe`, or set `CBM_PE_PATH=/path/to/ap.exe`. The harness
 loads it at runtime; it is never committed.
+The PE-oracle equivalence test in `test_tea_native` reads the default path
+`/tmp/opencode/ap.exe` only and does not honour `CBM_PE_PATH`; setting
+`CBM_PE_PATH` relocates the tool's `--pe-crypto` backend only.
 
 ## License
 
