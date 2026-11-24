@@ -56,7 +56,7 @@ static int write_regular(const char *path, long long offset,
     size_t put = fwrite(buf, 1, len, fp);
     int rc = (put == len && fflush(fp) == 0) ? 0 : -1;
     if (rc == 0 && fsync(fileno(fp)) != 0) rc = -1;
-    fclose(fp);
+    if (fclose(fp) != 0) rc = -1;
     return rc;
 }
 

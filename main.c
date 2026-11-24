@@ -304,12 +304,26 @@ static int container_mode(int argc, char **argv) {
            body_len);
 
     if (output) {
+        if (cbm_file_is_blockdev(output)) {
+            fprintf(stderr, "Error: --output must not target a block device (use --write-back for in-place device writes)\n");
+            goto out;
+        }
         printf("\nWriting re-encrypted container to '%s' ...\n", output);
         if (cbm_file_write(output, 0, reenc, CBM_CONTAINER_SIZE) != 0) {
             fprintf(stderr, "Error: write to '%s' failed\n", output);
             goto out;
         }
-        printf("Write OK (%d bytes)\n", CBM_CONTAINER_SIZE);
+        /* Read-back verification for --output (same proof as --write-back). */
+        unsigned char verify_buf[CBM_CONTAINER_SIZE];
+        if (cbm_file_read(output, 0, verify_buf, CBM_CONTAINER_SIZE) != 0) {
+            fprintf(stderr, "Error: failed to read back '%s' for verification\n", output);
+            goto out;
+        }
+        if (memcmp(verify_buf, reenc, CBM_CONTAINER_SIZE) != 0) {
+            fprintf(stderr, "Error: read-back of '%s' differs from written data\n", output);
+            goto out;
+        }
+        printf("Write + read-back verify OK (%d bytes)\n", CBM_CONTAINER_SIZE);
     }
     if (write_back) {
         printf("\nWriting re-encrypted container back to '%s' at offset %lld ...\n",
