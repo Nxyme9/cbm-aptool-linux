@@ -274,7 +274,7 @@ device I/O and no key-driven writes. State is gathered through the read-only
 fits), partition rows come from the device's actual first sector (unparsable ⇒
 zero rows, `mbr_status=INVALID`), and `backend=` reflects `cbm_backend_get()`.
 The full layout includes a two-row 16-byte-per-row hex view of that actual
-sector; `n`/`p` scroll it 16 bytes and `q`/ESC exits. In tty mode the terminal
+sector; each `n`/`p` press moves it one 16-byte row and `q`/ESC exits. In tty mode the terminal
 is set raw with `tcgetattr`/`cfmakeraw`/`tcsetattr` and always restored on exit;
 piped input is consumed without blocking. Scan hits and entropy are shown as
 `n/a` when this frame did not sample them — never fabricated zeros. The layout

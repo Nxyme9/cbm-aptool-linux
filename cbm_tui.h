@@ -48,4 +48,10 @@ typedef struct {
  * (ends with EL) and content is bounded by the requested width. */
 char *cbm_tui_render(const cbm_tui_state_t *st, size_t width, size_t height);
 
+/* Move the hex view by ONE 16-byte row (not 16 rows) per key press.
+ * 'n' adds 1 and 'p' subtracts 1 (floor 0); other keys leave scroll alone.
+ * An empty buffer always yields 0; 'n' is clamped to hex_len/16 and to the
+ * fixed hex buffer so the row index can never read past either. Pure (no I/O). */
+size_t cbm_tui_hex_scroll(int key, size_t scroll, size_t hex_len);
+
 #endif /* CBM_TUI_H */

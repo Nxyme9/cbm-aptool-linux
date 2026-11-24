@@ -236,6 +236,18 @@ static char *render_minimal(void) {
     return s.buf;
 }
 
+size_t cbm_tui_hex_scroll(int key, size_t scroll, size_t hex_len) {
+    if (hex_len == 0u) return 0u;
+    if (key == 'n') {
+        size_t max = hex_len / 16u;
+        size_t buf_rows = sizeof(((cbm_tui_state_t *)0)->hex) / 16u;
+        if (max > buf_rows) max = buf_rows;
+        return scroll < max ? scroll + 1u : max;
+    }
+    if (key == 'p') return scroll > 0u ? scroll - 1u : 0u;
+    return scroll;
+}
+
 char *cbm_tui_render(const cbm_tui_state_t *st, size_t width, size_t height) {
     if (!st) return NULL;
     if (width >= 80u && height >= 24u) return render_full(st, width, height);

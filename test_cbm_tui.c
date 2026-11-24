@@ -252,6 +252,71 @@ static void test_entropy_clamped_to_bits_per_byte(void) {
     if (ok) PASS(); else FAIL("entropy must be clamped to [0,8] bits per byte");
 }
 
+/* --- Hex scroll: n/p must move ONE 16-byte row, not 16 rows ------------- */
+
+static void test_n_advances_one_hex_row(void) {
+    TEST("tui: n advances the hex view by one 16-byte row");
+    size_t next = cbm_tui_hex_scroll('n', 0u, 512u);
+    if (next == 1u) PASS(); else FAIL("n must advance one row (1), not 16");
+}
+
+static void test_p_steps_back_one_hex_row(void) {
+    TEST("tui: p steps back one hex row and stops at zero");
+    size_t back = cbm_tui_hex_scroll('p', 1u, 512u);
+    size_t stop = cbm_tui_hex_scroll('p', 0u, 512u);
+    int ok = (back == 0u && stop == 0u);
+    if (ok) PASS(); else FAIL("p must decrement one row and clamp at zero");
+}
+
+static void test_repeated_n_reaches_partition_table(void) {
+    TEST("tui: repeated n reaches scroll 28 (offset 448)");
+    size_t s = 0u;
+    for (int i = 0; i < 28; i++) s = cbm_tui_hex_scroll('n', s, 512u);
+    int ok = (s == 28u && s * 16u == 448u);
+    if (ok) PASS(); else FAIL("28 presses must expose the MBR partition table");
+}
+
+static void test_n_clamps_at_hex_len_over_16(void) {
+    TEST("tui: n clamps at hex_len/16 and never exceeds the hex buffer");
+    size_t s = 0u;
+    for (int i = 0; i < 100; i++) s = cbm_tui_hex_scroll('n', s, 512u);
+    int ok = (s == 512u / 16u &&
+              s <= sizeof(((cbm_tui_state_t *)0)->hex) / 16u);
+    if (ok) PASS(); else FAIL("n must clamp at 512/16 = 32 rows");
+}
+
+static void test_n_on_empty_hex_stays_zero(void) {
+    TEST("tui: n/p on an empty hex buffer keep scroll at zero");
+    size_t next = cbm_tui_hex_scroll('n', 5u, 0u);
+    size_t back = cbm_tui_hex_scroll('p', 5u, 0u);
+    int ok = (next == 0u && back == 0u);
+    if (ok) PASS(); else FAIL("empty hex must force scroll 0 for any key");
+}
+
+static void test_other_keys_leave_scroll_unchanged(void) {
+    TEST("tui: unrelated keys leave the hex scroll unchanged");
+    size_t s = cbm_tui_hex_scroll('x', 7u, 512u);
+    if (s == 7u) PASS(); else FAIL("non n/p keys must not move the hex view");
+}
+
+static void test_scroll_28_renders_partition_table_bytes(void) {
+    TEST("tui: scroll 28 renders the MBR partition-table pattern");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    st.hex[448] = 0xde; st.hex[449] = 0xad;
+    st.hex[450] = 0xbe; st.hex[451] = 0xef;
+    st.hex[464] = 0xca; st.hex[465] = 0xfe;
+    st.hex[466] = 0xba; st.hex[467] = 0xbe;
+    st.hex_scroll = 28u;
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = (out != NULL &&
+              strstr(out, "HEX 01c0:deadbeef") != NULL &&
+              strstr(out, "01d0:cafebabe") != NULL &&
+              lines_well_formed(out + 7, 80));
+    free(out);
+    if (ok) PASS(); else FAIL("scroll 28 must emit bytes 448-479 from the fixture");
+}
+
 int main(void) {
     printf("=== CBM TUI Tests ===\n");
     test_snapshot_exact_bytes();
@@ -265,6 +330,13 @@ int main(void) {
     test_hex_scroll_is_clamped();
     test_no_scan_frame_says_not_sampled();
     test_entropy_clamped_to_bits_per_byte();
+    test_n_advances_one_hex_row();
+    test_p_steps_back_one_hex_row();
+    test_repeated_n_reaches_partition_table();
+    test_n_clamps_at_hex_len_over_16();
+    test_n_on_empty_hex_stays_zero();
+    test_other_keys_leave_scroll_unchanged();
+    test_scroll_28_renders_partition_table_bytes();
     printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

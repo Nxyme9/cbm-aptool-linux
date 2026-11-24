@@ -1284,13 +1284,8 @@ static int tui_mode(int argc, char **argv) {
             rc = 0;
             break;
         }
-        if (key == 'n') {
-            size_t max = st.hex_len / 16u;
-            if (st.hex_scroll < max)
-                st.hex_scroll = (st.hex_scroll + 16u <= max) ? st.hex_scroll + 16u : max;
-        } else if (key == 'p') {
-            st.hex_scroll = st.hex_scroll >= 16u ? st.hex_scroll - 16u : 0u;
-        }
+        if (key == 'n' || key == 'p')
+            st.hex_scroll = cbm_tui_hex_scroll(key, st.hex_scroll, st.hex_len);
     }
 done:
     if (tty) (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved); /* always restore */
