@@ -3,8 +3,13 @@
 # Container/pacing: native C
 
 CC = gcc
-CFLAGS = -m32 -Wall -Wextra -O2 -g
-LDFLAGS = -m32
+# Phase 0 / H1: exploitation mitigations plus a stricter warning set.
+# -Werror is applied only to format-security: the remaining warnings stay
+# informative so a new source file cannot silently break the build.
+CFLAGS = -m32 -O2 -g -Wall -Wextra -Wformat=2 -Werror=format-security \
+         -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wvla \
+         -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2
+LDFLAGS = -m32 -Wl,-z,relro,-z,now
 
 TARGET = cbm-tool
 CLI = pe-call
