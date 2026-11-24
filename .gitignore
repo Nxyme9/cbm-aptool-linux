@@ -38,4 +38,5 @@ test_cbm_scan
 test_cbm_scan_report
 test_tea_native
 test_pelib
+test_entropy_map
 pe-call

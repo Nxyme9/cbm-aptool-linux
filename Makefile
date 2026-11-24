@@ -8,7 +8,7 @@ LDFLAGS = -m32
 
 TARGET = cbm-tool
 CLI = pe-call
-TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report
+TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map
 
 # PE path overridable via CBM_PE_PATH env var; defaults to the APTool location.
 PE ?= /tmp/opencode/ap.exe
@@ -63,11 +63,14 @@ test_cbm_scan: test_cbm_scan.c cbm_scan.c cbm_scan.h cbm_fuzz.c cbm_fuzz.h cbm_c
 test_cbm_scan_report: test_cbm_scan_report.c cbm_scan_report.c cbm_scan_report.h cbm_scan.c cbm_scan.h cbm_fuzz.c cbm_fuzz.h cbm_container.c cbm_decode.c cbm_decode.h cbm_file.c paced_write.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_cbm_scan_report.c cbm_scan_report.c cbm_scan.c cbm_fuzz.c cbm_container.c cbm_decode.c cbm_file.c paced_write.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
 
+test_entropy_map: test_entropy_map.c entropy_map.c entropy_map.h cbm_decode.c cbm_decode.h cbm_file.c cbm_file.h cbm_layout.c cbm_layout.h paced_write.c
+	$(CC) $(CFLAGS) -o $@ test_entropy_map.c entropy_map.c cbm_decode.c cbm_file.c cbm_layout.c paced_write.c $(LDFLAGS)
+
 pe-call: pe-call.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ pe-call.c pelib.c $(LDFLAGS)
 
 test: $(TESTS) $(TARGET)
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map
 
 # CLI-level backend selection: no device access; fixtures go under /tmp/opencode.
 test-cli: $(TARGET)
