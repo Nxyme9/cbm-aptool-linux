@@ -273,6 +273,46 @@ static void test_print_rows(void) {
     if (ok) PASS(); else FAIL("print output does not match expected stable format");
 }
 
+static void test_print_entropy_delta_sign(void) {
+    TEST("cbm_diff_print: entropy_delta sign follows entropy_a - entropy_b");
+    unsigned char a[64], b[64];
+    memset(a, 0, sizeof(a));                       /* entropy_a == 0 */
+    for (size_t i = 0; i < sizeof(b); i++) b[i] = (unsigned char)(1 + i % 8);
+
+    char *text = NULL;
+    size_t tlen = 0;
+    int ok = 0;
+    FILE *m = open_memstream(&text, &tlen);
+    if (!m) { FAIL("open_memstream"); return; }
+
+    cbm_diff_print(a, sizeof(a), b, sizeof(b), 3, m);
+    fflush(m);
+    ok = text != NULL &&
+         strstr(text, "entropy_a 0.000000\n") != NULL &&
+         strstr(text, "entropy_b 3.000000\n") != NULL &&
+         strstr(text, "entropy_delta -3.000000\n") != NULL &&
+         strchr(text, ',') == NULL;
+    fclose(m);
+    free(text);
+
+    text = NULL;
+    tlen = 0;
+    m = open_memstream(&text, &tlen);
+    if (m) {
+        cbm_diff_print(b, sizeof(b), a, sizeof(a), 3, m);
+        fflush(m);
+        ok = ok && text != NULL &&
+             strstr(text, "entropy_delta +3.000000\n") != NULL &&
+             strchr(text, ',') == NULL;
+        fclose(m);
+        free(text);
+    } else {
+        ok = 0;
+    }
+
+    if (ok) PASS(); else FAIL("entropy_delta must be negative when a < b and positive when a > b");
+}
+
 static void test_print_locale_independent(void) {
     TEST("cbm_diff_print: '.' decimal point under a comma-decimal locale");
 
@@ -337,6 +377,7 @@ int main(void) {
     test_empty_inputs();
     test_exact_allocation_bounds();
     test_print_rows();
+    test_print_entropy_delta_sign();
     test_print_locale_independent();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;

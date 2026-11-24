@@ -77,7 +77,10 @@ size_t cbm_diff_changed_bytes(const unsigned char *a, size_t alen,
  * scaled value always fits an unsigned int on 32-bit. */
 static void print_entropy(FILE *out, const char *label, double value,
                           int with_sign) {
-    unsigned scaled = (unsigned)(value * 1000000.0 + 0.5);
+    /* Keep the original signed value for the sign; scale only the magnitude so
+     * a negative entropy delta prints '-' with a positive fixed-point part. */
+    double mag = value < 0.0 ? -value : value;
+    unsigned scaled = (unsigned)(mag * 1000000.0 + 0.5);
     if (with_sign) {
         fprintf(out, "%s %c%u.%06u\n", label, value < 0.0 ? '-' : '+',
                 scaled / 1000000u, scaled % 1000000u);
@@ -148,7 +151,7 @@ void cbm_diff_print(const unsigned char *a, size_t alen,
     fprintf(out, "changed_bytes %zu\n", cbm_diff_changed_bytes(a, alen, b, blen));
     print_entropy(out, "entropy_a", entropy_a, 0);
     print_entropy(out, "entropy_b", entropy_b, 0);
-    print_entropy(out, "entropy_delta", delta < 0.0 ? -delta : delta, 1);
+    print_entropy(out, "entropy_delta", delta, 1);
 
     for (size_t i = 0; i < n; i++) {
         size_t span_a = 0, span_b = 0;
