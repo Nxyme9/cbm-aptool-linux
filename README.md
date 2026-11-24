@@ -90,7 +90,7 @@ recovered tables, flag sequences and golden vectors.
     make clean && make && make test
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
-with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `0ad881d`, 2026-11-24)
+with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `38290cd`, 2026-11-24)
 with the full chain `make clean && make && make test && sh test_backend_cli.sh`:
 **178 passed, 0 failed, 0 skipped** with PE and **172 passed, 0 failed,
 4 skipped** with no usable PE, each across 20 `Results:` lines. The separately

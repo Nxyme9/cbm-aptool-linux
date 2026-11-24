@@ -7,12 +7,14 @@ exactly where the evidence stops.
 
 ## No vendor binary is needed
 
-The build, `make test`, and every normal CLI mode — `container`, `decode`,
-`diff`, `fuzz`, `scan`, `doctor` and `tui` — run with no vendor PE present and
-`CBM_PE_PATH` unset. The native TEA implementation is the default backend;
-there is no compiled-in PE path and no silent fallback. The PE harness is an
-**explicit opt-in cross-check**: set `CBM_PE_PATH` to your own legally obtained
-PE before using `--pe-crypto`; without it the command fails with
+The build, `make test`, and every normal CLI mode — `container`, `diff`,
+`fuzz`, `scan`, `heatmap`, `doctor` and `tui` — run with no vendor PE present
+and `CBM_PE_PATH` unset. Decoding is a container-mode capability
+(`container --dump-plain`), not a separate subcommand. The native TEA
+implementation is the default backend; there is no compiled-in PE path and no
+silent fallback. The PE harness is an **explicit opt-in cross-check**: set
+`CBM_PE_PATH` to your own legally obtained PE before using `--pe-crypto`;
+without it the command fails with
 `Error: --pe-crypto requires CBM_PE_PATH (no vendor binary default)`. No vendor
 binary, key leak or device serial is committed. Each gap below carries a
 disposition and the exact gate for full closure; none is claimed closed
@@ -20,7 +22,7 @@ without evidence.
 
 ## Measured counts (scope)
 
-Measured on this tree at HEAD `0ad881d`, from two fresh logs under
+Measured on this tree at HEAD `38290cd`, from two fresh logs under
 `/tmp/opencode/`:
 
 - `nohl-final-with-pe.log` (`CBM_PE_PATH` pointed at the user's own PE):
@@ -31,6 +33,11 @@ Measured on this tree at HEAD `0ad881d`, from two fresh logs under
   file never moved or deleted): **20 `Results:` lines summing to 172 passed,
   0 failed, 4 skipped**; the separately formatted `test_pelib` line reads
   `test_pelib: 10 passed, 0 failed`.
+
+Capture protocol: one shell per mode, with `export CBM_PE_PATH=...` in the same
+scope as the test commands (not merely echoed). Each log records the live value
+and whether the file exists; the no-PE SKIP reasons name the bogus path
+`/tmp/opencode/does-not-exist.exe`, which makes the evidence checkable.
 
 Scope: 178 and 172 are sums of the `Results:` lines only. The `test_pelib`
 counts come from its own summary line and are **not** part of those sums. The

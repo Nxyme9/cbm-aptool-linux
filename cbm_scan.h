@@ -42,9 +42,10 @@ typedef struct {
  * `max == 0`, buffer `len` shorter than one container (85688 bytes), bad computed
  * body length, uninitialized crypto, allocation failure, or zero candidates/gate
  * rejections. CALLERS MUST TREAT 0 AS “NO CANDIDATES IN THIS BUFFER”, NOT AS A
- * GUARANTEE THAT THE BUFFER IS CLEAN. Note: cbm_scan_buffer itself does not
- * suppress shifted self-synchronised duplicate hits; cluster suppression is
- * performed exclusively by cbm_scan_image across chunk boundaries.
+ * GUARANTEE THAT THE BUFFER IS CLEAN. Note: cbm_scan_buffer never suppresses
+ * shifted self-synchronised duplicate hits; cluster suppression happens in
+ * cbm_scan_image / cbm_scan_image_ex across chunk boundaries, according to the
+ * `suppress_clusters` argument (0 keeps every candidate, including shifts).
  * base_offset is the buffer's absolute byte offset... */
 size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
                        const char *const *magics, size_t nmagic,
@@ -83,14 +84,14 @@ int cbm_scan_image_ex(const char *path, unsigned long long start_byte,
                       cbm_scan_hit_t **out, size_t *out_count,
                       char *err, size_t errlen);
 
-/* Free a hit array returned by cbm_scan_image (safe on NULL). */
+/* Free a hit array returned by cbm_scan_image or cbm_scan_image_ex (safe on NULL). */
 void cbm_scan_free_hits(cbm_scan_hit_t *hits);
 
 /* Print one deterministic, locale-independent row per hit to out:
  * "offset header %u.%06u sha256hex token_count [offset:token]...". Entropy is
  * fixed-point with exactly six decimals after a literal '.', never %.6f.
- * Hits are printed in the order supplied (ascending offset from
- * cbm_scan_image). No-op when out is NULL. */
+ * Hits are printed in the order supplied (ascending offset from either scan
+ * function, cbm_scan_image or cbm_scan_image_ex). No-op when out is NULL. */
 void cbm_scan_print(FILE *out, const cbm_scan_hit_t *hits, size_t n);
 
 #endif /* CBM_SCAN_H */

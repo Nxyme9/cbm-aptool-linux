@@ -330,7 +330,7 @@ section-copy loop.
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`; the `cbm-tool` target also
 links `-lz`. Produces `cbm-tool`, the `pe-call` CLI, nineteen test binaries
-and one shell CLI suite. Measured at HEAD `0ad881d`: 178 passed, 0 failed,
+and one shell CLI suite. Measured at HEAD `38290cd`: 178 passed, 0 failed,
 0 skipped with PE, and 172 passed, 0 failed, 4 skipped without a usable PE,
 each across 20 `Results:` lines (plus a separately formatted `test_pelib`
 line: 21 / 10 passes). Counts are from `/tmp/opencode/nohl-final-with-pe.log`

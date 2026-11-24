@@ -69,4 +69,4 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current (measured at `0ad881d`): 178 passed, 0 failed, 0 skipped with PE / 172 passed, 0 failed, 4 skipped without a usable PE, each across 20 `Results:` lines (plus a separately formatted `test_pelib` line: 21 / 10 passed), MIT. The doctor repair path needs `--repair-mbr --yes --backup`; the TUI is read-only by construction.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current (measured at `38290cd`): 178 passed, 0 failed, 0 skipped with PE / 172 passed, 0 failed, 4 skipped without a usable PE, each across 20 `Results:` lines (plus a separately formatted `test_pelib` line: 21 / 10 passed), MIT. The doctor repair path needs `--repair-mbr --yes --backup`; the TUI is read-only by construction.
