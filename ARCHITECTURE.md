@@ -2,14 +2,15 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(53/53 across ten suites, including CLI backend selection) and the
+(72/72 across eleven suites, including CLI backend selection) and the
 real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
 Recovered from the vendor PE by the mmap-at-ImageBase harness (see
 [PE-HARNESS.md](PE-HARNESS.md)). `tea_crypto.c` is now the backend
-dispatcher; the native default is described in §9.
+dispatcher; the PE branch calls the shared loader in `pelib.{h,c}` (§10).
+The native default is described in §9.
 
 | Symbol | PE address | Role |
 |---|---|---|
@@ -22,7 +23,9 @@ dispatcher; the native default is described in §9.
 
 - Key: `"1a2b3c4d5e6fTENG"` (16 bytes, `TEA_KEY_LEN`).
 - Block size: 8 bytes (`TEA_BLOCK_SIZE`); state size: 16 bytes.
-- State is zeroed (`memset 0x531328, 0, 16`) before every encrypt/decrypt call.
+- State is zeroed before every encrypt/decrypt call by `pe_call_void`
+  (`memset` of 16 bytes at RVA `0x131328` / VA `0x531328` inside the loaded
+  image); `tea_crypto.c` does not reset it a second time.
 - Roundtrip verified by `rtlen` (perfect inverse to L=85687) and `rttest`
   (match=1) probes before porting.
 
@@ -181,8 +184,8 @@ and does not honour `CBM_PE_PATH`; that variable relocates the tool's
       -> cbm_backend_set()                store choice (native default)
       -> container mode may return early  (flags already stripped from argv)
       -> tea_init()  [tea_crypto.c]       native: g_ready = 1, no mmap
-                                          PE: mmap vendor image at 0x400000
-      -> tea_encrypt()/tea_decrypt()      dispatch to tea_native_* or PE fn ptr
+                                          PE: pe_load() holds the image at 0x400000
+      -> tea_encrypt()/tea_decrypt()      dispatch to tea_native_* or pe_call_void()
 
 There is no silent fallback: if the requested backend cannot initialise,
 `tea_init` fails and `tea_encrypt`/`tea_decrypt` refuse to run. In PE mode
@@ -190,6 +193,34 @@ There is no silent fallback: if the requested backend cannot initialise,
 maps and unmaps the PE at `0x400000` itself and would otherwise clobber the
 live backend mapping — and prints `PE self-check: PASS ...` on a byte-identical
 match. The PE remains the validation oracle, not a runtime dependency.
+
+## 10. PE loader library (`pelib.{h,c}`)
+
+One reusable fixed-base PE loader now serves the PE backend, the generic
+`pe-call` CLI and `test_pelib`; `tea_crypto.c` no longer contains an mmap or
+section-copy loop.
+
+- `pe_load(img, path, hooks)` reads the PE, checks the DOS/PE headers, section
+  table and every raw-data range with 64-bit bounds arithmetic, and maps it at
+  `PE_BASE 0x400000` / `PE_MAPSZ 0x140000` with `MAP_FIXED_NOREPLACE`. A second
+  concurrent image or an already-occupied base fails cleanly. `path` may be
+  NULL/empty, in which case `CBM_PE_PATH` or `/tmp/opencode/ap.exe` is used;
+  `tea_init` passes only an explicit, validated path so PE mode never silently
+  falls back.
+- `pe_rva_to_va(img, rva)` resolves an RVA within the declared image size.
+- `pe_call_void(img, rva_or_va, arg, n)` packs `n` bytes (1-3 `uint32_t`
+  words, 4-12 bytes) into `args[0..2]`, zero-fills missing words, zeroes the
+  16-byte TEA state at RVA `0x131328`, and calls through a 3-argument
+  `__stdcall` pointer (callee cleans the stack). `tea_encrypt` supplies
+  `[&buf, len, &key]` with `n = 12`.
+- `pe_export(img, name, &rva)` resolves named exports (absent in `ap.exe`).
+- `pe_import_hook_t` entries patch named imports in the IAT after sections are
+  mapped; hooks are matched case-insensitively, ordinals are skipped.
+- `pe_unload(img)` munmaps the image and clears the singleton; it tolerates
+  NULL and double unload. `tea_cleanup()` calls it once.
+- `pe-call <pe-path> <rva|export-name> <hex-args>` exposes the same API from
+  the shell. `test_pelib` (19/19) covers loader failures, golden encrypt
+  `e66254b5da09fb31`, decrypt roundtrip and IAT hook dispatch.
 
 ## Data flow (device validation)
 
@@ -206,8 +237,9 @@ match. The PE remains the validation oracle, not a runtime dependency.
 
     make clean && make && make test
 
-`CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool` plus
-nine test binaries and one shell CLI suite. All 53 tests pass across ten suites
-(`test_tea` 6, `test_tea_native` 8, `test_cbm` 5, `test_paced` 5,
-`test_usb_mass` 3, `test_layout` 5, `test_nand` 3, `test_cbm_file` 5,
-`test_cbm_inspect` 9, `test_backend_cli.sh` 4).
+`CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool`, the
+`pe-call` CLI, ten test binaries and one shell CLI suite. All 72 tests pass
+across eleven suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
+`test_paced` 5, `test_usb_mass` 3, `test_layout` 5, `test_nand` 3,
+`test_cbm_file` 5, `test_cbm_inspect` 9, `test_pelib` 19,
+`test_backend_cli.sh` 4).

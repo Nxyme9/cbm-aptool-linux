@@ -11,39 +11,46 @@ and operate on a 16-byte state at `0x531328`. To call them we need the PE's
 code and data present at those exact addresses, with the state region
 writable and zeroed.
 
-## Technique: mmap at ImageBase
+## Technique: mmap at ImageBase — now in `pelib`
 
-Constants (from `tea_crypto.c`):
+The loader lives in `pelib.{h,c}`, not in `tea_crypto.c`. Constants:
 
-    #define BASE   0x400000u   // PE ImageBase
-    #define MAPSZ  0x140000u   // 1.25 MiB covering code + data
+    #define PE_BASE  0x400000u   // PE ImageBase
+    #define PE_MAPSZ 0x140000u   // 1.25 MiB covering code + data
 
-Steps (in `tea_init`):
+`pe_load(&img, path, hooks)` performs all the steps that were once inline:
 
-1. Read the PE file into a buffer.
-2. `mmap((void*)BASE, MAPSZ, PROT_READ|PROT_WRITE|PROT_EXEC,
-          MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED, -1, 0)` — reserves the
-   ImageBase region at the exact VA. `MAP_FIXED` is what makes the PE's
-   hardcoded addresses valid.
-3. Read `e_lfanew` from PE offset `0x3c` (`po = rd32(pe, 0x3c)`).
-4. Section count `ns = rd16(pe, po+6)`; optional-header size
-   `os = rd16(pe, po+20)`; section table `sh = po + 24 + os`.
-5. Copy headers: `memcpy(BASE, pe, sh + ns*40)`.
-6. For each section i: read VA (`rd32(s,12)`), raw size (`rd32(s,16)`),
-   raw pointer (`rd32(s,20)`); `memcpy(BASE+va, pe+rp, rs)`.
-7. Free the file buffer; set `g_ready = 1`.
+1. Read the PE file into a buffer (`CBM_PE_PATH` override, default
+   `/tmp/opencode/ap.exe` when the caller passes NULL/empty).
+2. Validate DOS magic, `e_lfanew`, PE signature, section count, optional-header
+   size and every section's raw range with 64-bit bounds arithmetic; check the
+   declared ImageBase is `0x400000`.
+3. `mmap((void*)PE_BASE, PE_MAPSZ, PROT_READ|PROT_WRITE|PROT_EXEC,
+          MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED_NOREPLACE, -1, 0)` — reserves
+   the exact VA and fails if someone else already owns it.
+4. Copy headers and each section to `PE_BASE + VirtualAddress`.
+5. Patch any caller-supplied `pe_import_hook_t` stubs into the IAT after all
+   sections are mapped.
+6. Hold the image as a singleton until `pe_unload(img)`.
 
-The TEA cores are then callable as function pointers cast to `__stdcall`:
-
-    typedef void (__attribute__((stdcall)) *encfn_t)(unsigned char *, int, const char *);
-    encfn_t f = (encfn_t)(void *)0x459da0;
+`tea_init(PE)` calls `pe_load` and keeps the image; `tea_cleanup` calls
+`pe_unload` once. `main.c` still runs `tea_native_selfcheck()` (which maps and
+unmaps `0x400000` itself) *before* `tea_init`, so the two never collide.
 
 ## Calling convention
 
-The PE cores use `__stdcall` (callee cleans the stack). GCC's
-`__attribute__((stdcall))` on the function-pointer type makes the call
-site emit the correct convention. State at `0x531328` is zeroed
-(`memset`) before every call.
+`pe_call_void(img, rva, arg, n)` is the single call path. It copies `n` bytes
+(4-12, a multiple of 4) from `arg` into three `uint32_t` words, zero-fills
+missing words, zeroes the 16-byte TEA state at VA `0x531328` (RVA `0x131328`),
+then calls through:
+
+    typedef void (__attribute__((stdcall)) *pe_fn3_t)(uint32_t, uint32_t, uint32_t);
+
+The PE cores use `__stdcall` (callee cleans the stack), so no caller-side
+stack adjustment is needed. `tea_encrypt`/`tea_decrypt` pass
+`[&buf, (uint32_t)len, &key]` with `n = 12`; the 32-bit build makes pointer and
+length words exact. The generic `pe-call` CLI exposes the same ABI from the
+shell, and `pe_export` resolves named exports when a PE has them.
 
 ## Validation before porting
 
@@ -70,10 +77,12 @@ cipher before any C port was written.
 
 ## Limitations
 
-- One PE at a time: `BASE` is fixed; loading a second PE collides.
+- One PE at a time: `PE_BASE` is fixed; loading a second PE collides.
 - No relocation table processing — the PE must already target
   `0x400000`.
-- No import resolution — only self-contained internal cores (TEA) are
-  called; no Windows APIs are invoked.
+- No Windows API resolution: imports are only patched when the caller passes
+  matching `pe_import_hook_t` stubs; no Windows library is loaded or invoked.
 - ASLR is not handled (irrelevant for this fixed-base PE).
 - The PE binary itself is never committed or published.
+- `test_pelib` (19/19) and `pe-call` exercise the library directly, including
+  the golden TEA vector `e66254b5da09fb31` and IAT hook dispatch.

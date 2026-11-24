@@ -15,17 +15,17 @@ PE ?= /tmp/opencode/ap.exe
 
 all: $(TARGET) $(CLI) $(TESTS)
 
-$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c
-	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c $(LDFLAGS)
+$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c
+	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c $(LDFLAGS)
 
-test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h
-	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c $(LDFLAGS)
+test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
+	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
 
-test_tea_native: test_tea_native.c tea_native.c tea_crypto.c cbm_backend.h
-	$(CC) $(CFLAGS) -I. -o $@ test_tea_native.c tea_native.c tea_crypto.c $(LDFLAGS)
+test_tea_native: test_tea_native.c tea_native.c tea_crypto.c cbm_backend.h pelib.c pelib.h
+	$(CC) $(CFLAGS) -I. -o $@ test_tea_native.c tea_native.c tea_crypto.c pelib.c $(LDFLAGS)
 
-test_cbm: test_cbm.c cbm_container.c tea_crypto.c tea_native.c cbm_backend.h
-	$(CC) $(CFLAGS) -o $@ test_cbm.c cbm_container.c tea_crypto.c tea_native.c $(LDFLAGS)
+test_cbm: test_cbm.c cbm_container.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
+	$(CC) $(CFLAGS) -o $@ test_cbm.c cbm_container.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
 
 test_paced: test_paced.c paced_write.c
 	$(CC) $(CFLAGS) -o $@ test_paced.c paced_write.c $(LDFLAGS)

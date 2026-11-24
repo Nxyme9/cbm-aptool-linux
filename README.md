@@ -53,9 +53,11 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
   No vendor binary, no `mmap`, no `ap.exe`. Every normal command, including
   `container` mode, uses this backend.
 - **PE harness (opt-in)** — `--pe-crypto` runs the original vendor TEA cores
-  through the mmap-at-ImageBase loader in `tea_crypto.c` as a cross-check. It
-  needs a user-supplied `ap.exe`. There is **no silent fallback**: if the
-  requested backend cannot initialise, the command fails with an error.
+  through the reusable `pelib` fixed-base loader (`pe_load` / `pe_call_void` /
+  `pe_unload`) as a cross-check. `tea_crypto.c` only dispatches to it; there is
+  one PE loader in the codebase. It needs a user-supplied `ap.exe`. There is
+  **no silent fallback**: if the requested backend cannot initialise, the
+  command fails with an error.
 
 `--native-crypto` selects the default explicitly; `--pe-crypto` selects the
 cross-check (last flag wins). Flags are stripped before mode dispatch, so
@@ -78,12 +80,13 @@ sequences and golden vectors.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 53/53 PASS
-across ten suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
-layout 5, nand 3, cbm_file 5, cbm_inspect 9, backend_cli 4). The four
-PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
-`test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; the
-other 49 tests need no vendor binary.
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 72/72 PASS
+across eleven suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
+layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, backend_cli 4). The
+four 5A PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and
+the two `test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied;
+eleven `test_pelib` cases need the vendor PE and fail without it. The remaining
+57 checks need no vendor binary.
 
 ## Device validation
 
@@ -117,12 +120,18 @@ Combine with `--output` for a new container or `--write-back` for in-place
 replacement (paced writes on block devices). Injection never changes the
 encryption flag or the container size.
 
-## PE harness
+## PE framework
 
 The TEA core was originally recovered by running the vendor PE natively on
-Linux via an mmap-at-ImageBase harness (no Wine). That harness is now an
-opt-in `--pe-crypto` cross-check rather than a runtime dependency. See
-[PE-HARNESS.md](PE-HARNESS.md).
+Linux via an mmap-at-ImageBase harness (no Wine). The loader and call ABI now
+live in the reusable `pelib.{h,c}` library: `pe_load` maps one PE at
+`ImageBase 0x400000` with bounds-checked headers, `pe_rva_to_va` resolves
+addresses, `pe_call_void` invokes a target with the packed three-word
+`__stdcall` ABI, `pe_export` finds named exports and `pe_unload` releases the
+image. `tea_crypto.c` uses it for the opt-in `--pe-crypto` cross-check, and the
+`pe-call <pe-path> <rva|export> <hex-args>` CLI exposes the same API directly.
+Neither is a runtime dependency of the default native backend. See
+[PE-HARNESS.md](PE-HARNESS.md) and [ARCHITECTURE.md](ARCHITECTURE.md) §10.
 
 ## Supply your own ap.exe (PE cross-check only)
 
