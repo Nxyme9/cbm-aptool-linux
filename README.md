@@ -42,8 +42,8 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 39/39 PASS
-across eight test suites.
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 40/40 PASS
+across eight test suites (cbm 5, tea 5, paced 5, usb_mass 3, layout 5, nand 3, cbm_file 5, cbm_inspect 9).
 
 ## Device validation
 

@@ -30,4 +30,5 @@ Thumbs.db
 /tmp
 scratchpad
 "><|end|><|start|>start to=write<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name="path">
-/home/nxyme/Code-wt/cbm-aptool-linux/LICENSE
+/home/nxyme/Code-wt/cbm-aptool-linux/LICENSEtest_cbm_file
+test_cbm_inspect

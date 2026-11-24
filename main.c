@@ -280,9 +280,10 @@ static int container_mode(int argc, char **argv) {
     fputs("[stats]\n", stdout);
     cbm_inspect_stats(plain + CBM_HEADER_SIZE, body_len, stdout);
     fputs("\n[hex dump]\n", stdout);
-    /* Design asks for first 256 + last 64 bytes, but cbm_inspect_hex splits a
-     * cap symmetrically and cannot express an asymmetric head/tail. 640 shows
-     * the same total number of bytes (320 head + 320 tail). */
+    /* Design asks for first 256 + last 64 bytes (= 320 total), but
+     * cbm_inspect_hex splits a cap symmetrically and cannot express an
+     * asymmetric head/tail. Using 640 (= 320 head + 320 tail) shows a
+     * symmetric window with double the design's byte count. */
     cbm_inspect_hex(plain + CBM_HEADER_SIZE, body_len, hex_full ? 0 : 640, stdout);
     printf("\n[strings (minimum length %zu)]\n", min_run);
     cbm_inspect_strings(plain + CBM_HEADER_SIZE, body_len, min_run, stdout);
@@ -341,7 +342,7 @@ static int container_mode(int argc, char **argv) {
         fputs("\nNo write performed (safe default).\n", stdout);
     }
 
-    printf("\nContainer mode: PASS\n");
+    printf("\nContainer mode: crypto roundtrip OK (no container authenticity claim)\n");
     rc = 0;
 out:
     tea_cleanup();
