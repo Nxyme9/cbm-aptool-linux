@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <errno.h>
 
 #include "cbm_file.h"
 #include "paced_write.h"
@@ -43,7 +44,10 @@ static int write_regular(const char *path, long long offset,
                          const unsigned char *buf, size_t len) {
     /* Prefer in-place update of an existing file; create only when missing. */
     FILE *fp = fopen(path, "r+b");
-    if (!fp) fp = fopen(path, "w+b");
+    if (!fp) {
+        int saved_errno = errno;
+        if (saved_errno == ENOENT) fp = fopen(path, "w+b");
+    }
     if (!fp) return -1;
     if (fseeko(fp, (off_t)offset, SEEK_SET) != 0) {
         fclose(fp);
@@ -51,6 +55,7 @@ static int write_regular(const char *path, long long offset,
     }
     size_t put = fwrite(buf, 1, len, fp);
     int rc = (put == len && fflush(fp) == 0) ? 0 : -1;
+    if (rc == 0 && fsync(fileno(fp)) != 0) rc = -1;
     fclose(fp);
     return rc;
 }
@@ -61,9 +66,20 @@ static int read_blockdev(const char *path, long long offset,
                          unsigned char *buf, size_t len) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) return -1;
-    ssize_t got = pread(fd, buf, len, (off_t)offset);
+    size_t got_total = 0;
+    while (got_total < len) {
+        ssize_t got = pread(fd, buf + got_total, len - got_total,
+                            (off_t)offset + (off_t)got_total);
+        if (got < 0) {
+            if (errno == EINTR) continue;
+            close(fd);
+            return -1;
+        }
+        if (got == 0) break; /* EOF */
+        got_total += (size_t)got;
+    }
     close(fd);
-    return (got == (ssize_t)len) ? 0 : -1;
+    return (got_total == len) ? 0 : -1;
 }
 
 /* Context for the paced_write callback: destination fd and running offset. */
@@ -74,9 +90,19 @@ typedef struct {
 
 static int pwrite_chunk(const void *data, size_t len, void *ctx) {
     pwrite_ctx_t *c = (pwrite_ctx_t *)ctx;
-    ssize_t wrote = pwrite(c->fd, data, len, c->offset);
-    if (wrote != (ssize_t)len) return -1;
-    c->offset += (off_t)len;
+    const unsigned char *p = (const unsigned char *)data;
+    size_t remaining = len;
+    while (remaining > 0) {
+        ssize_t wrote = pwrite(c->fd, p, remaining, c->offset);
+        if (wrote < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (wrote == 0) return -1; /* no progress */
+        p += (size_t)wrote;
+        c->offset += (off_t)wrote;
+        remaining -= (size_t)wrote;
+    }
     return 0;
 }
 
