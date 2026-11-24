@@ -80,7 +80,9 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   strings, stats, tokens), re-encrypts and verifies the roundtrip. Writes
   nothing unless `--output <path>` or `--write-back` is given (safe
   default); block-device targets use paced writes. Also supports `--offset`,
-  `--hex-full` and `--min-string`.
+  `--hex-full`, `--min-string`, `--dump-plain <path>` (decrypted 85687-byte
+  body) and `--inject <path>` (exact-size replacement body, re-encrypted with
+  the header preserved).
 - PE path overridable via `CBM_PE_PATH` env var (default
   `/tmp/opencode/ap.exe`).
 

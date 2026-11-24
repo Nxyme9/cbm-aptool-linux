@@ -30,7 +30,9 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
   tokens), re-encrypts and verifies the roundtrip. Writes nothing by default;
   `--output <path>` and `--write-back` commit the re-encrypted container
   (block-device targets use paced writes). Also supports `--offset N`,
-  `--hex-full` and `--min-string N`.
+  `--hex-full`, `--min-string N`, `--dump-plain <path>` (write the decrypted
+  85687-byte body) and `--inject <path>` (replace the body with an exact-size
+  modified plaintext before re-encryption).
 
 ## Not recovered (see GAPS.md)
 
@@ -56,6 +58,9 @@ See [docs/device-validation.md](docs/device-validation.md) (serial redacted).
     ./cbm-tool container container.bin
     ./cbm-tool container /dev/sdX --offset 1048576 --hex-full
     ./cbm-tool container container.bin --output container.reenc
+    ./cbm-tool container container.bin --dump-plain body.bin
+    ./cbm-tool container container.bin --inject body.mod.bin --output patched.bin
+    ./cbm-tool container container.bin --inject body.mod.bin --write-back
 
 Reads an 85688-byte CBM container, decrypts and inspects the body, then
 re-encrypts it and verifies the roundtrip without modifying the target. Add
@@ -64,6 +69,15 @@ re-encrypts it and verifies the roundtrip without modifying the target. Add
 `--offset N` selects a byte offset on block devices; `--hex-full` dumps every
 byte instead of the default first 320 + last 320; `--min-string N` sets the
 minimum printable-string length (default 4).
+
+### Content modification
+
+`--dump-plain <path>` writes the decrypted 85687-byte body (header excluded).
+Edit that file, then pass it back with `--inject <path>`; the inject file must
+be exactly 85687 bytes. The header byte is preserved from the source container.
+Combine with `--output` for a new container or `--write-back` for in-place
+replacement (paced writes on block devices). Injection never changes the
+encryption flag or the container size.
 
 ## PE harness
 

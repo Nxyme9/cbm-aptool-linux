@@ -165,7 +165,9 @@ static void print_container_usage(const char *prog) {
         "  --write-back     write re-encrypted container back to target\n"
         "  --output <p>     write re-encrypted container to a different file\n"
         "  --hex-full       full hex dump (default: first 320 + last 320 bytes)\n"
-        "  --min-string N   minimum printable string length (default 4)\n",
+        "  --min-string N   minimum printable string length (default 4)\n"
+        "  --dump-plain <p> write decrypted body (85687 bytes) to file <p>\n"
+        "  --inject <p>     replace decrypted body with exact-size file <p> before re-encrypt\n",
         prog);
 }
 
@@ -185,6 +187,8 @@ static int parse_nonneg_ll(const char *s, long long *out) {
 static int container_mode(int argc, char **argv) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *output = NULL;
+    const char *dump_plain = NULL;
+    const char *inject = NULL;
     long long offset = 0;
     long long min_string = 4;
     int write_back = 0, hex_full = 0;
@@ -220,6 +224,20 @@ static int container_mode(int argc, char **argv) {
             write_back = 1;
         } else if (strcmp(a, "--hex-full") == 0) {
             hex_full = 1;
+        } else if (strcmp(a, "--dump-plain") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: --dump-plain needs a file path\n");
+                print_container_usage(argv[0]);
+                return 1;
+            }
+            dump_plain = argv[i];
+        } else if (strcmp(a, "--inject") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: --inject needs a file path\n");
+                print_container_usage(argv[0]);
+                return 1;
+            }
+            inject = argv[i];
         } else {
             fprintf(stderr, "Error: unknown container option '%s'\n", a);
             print_container_usage(argv[0]);
@@ -241,6 +259,8 @@ static int container_mode(int argc, char **argv) {
            cbm_file_is_blockdev(path) ? "block device" : "regular file", offset);
     if (output) printf("Output file: %s (offset 0)\n", output);
     if (write_back) printf("Write-back: enabled\n");
+    if (dump_plain) printf("Dump plaintext: %s\n", dump_plain);
+    if (inject) printf("Inject plaintext: %s\n", inject);
 
     const char *pe_path = getenv("CBM_PE_PATH");
     if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
@@ -276,6 +296,59 @@ static int container_mode(int argc, char **argv) {
     }
     printf("Decrypted body: %zu bytes\n", body_len);
 
+    if (inject) {
+        FILE *inf = fopen(inject, "rb");
+        if (!inf) {
+            fprintf(stderr, "Error: cannot open inject file '%s': %s\n", inject, strerror(errno));
+            goto out;
+        }
+        if (fseeko(inf, 0, SEEK_END) != 0) {
+            fprintf(stderr, "Error: cannot seek inject file '%s'\n", inject);
+            fclose(inf);
+            goto out;
+        }
+        long long inject_size = ftello(inf);
+        if (inject_size < 0 || inject_size != (long long)body_len) {
+            fprintf(stderr, "Error: inject file '%s' must be exactly %zu bytes (got %lld)\n",
+                    inject, body_len, inject_size);
+            fclose(inf);
+            goto out;
+        }
+        if (fseeko(inf, 0, SEEK_SET) != 0) {
+            fprintf(stderr, "Error: cannot rewind inject file '%s'\n", inject);
+            fclose(inf);
+            goto out;
+        }
+        size_t got = fread(plain + CBM_HEADER_SIZE, 1, body_len, inf);
+        int inject_err = ferror(inf);
+        if (fclose(inf) != 0) inject_err = 1;
+        if (inject_err || got != body_len) {
+            fprintf(stderr, "Error: failed to read %zu bytes from inject file '%s'\n", body_len, inject);
+            goto out;
+        }
+        printf("Injected %zu bytes from '%s' into plaintext body\n", body_len, inject);
+    }
+
+    if (dump_plain) {
+        if (cbm_file_is_blockdev(dump_plain)) {
+            fprintf(stderr, "Error: --dump-plain must not target a block device\n");
+            goto out;
+        }
+        FILE * outf = fopen(dump_plain, "wb");
+        if (!outf) {
+            fprintf(stderr, "Error: cannot open dump file '%s': %s\n", dump_plain, strerror(errno));
+            goto out;
+        }
+        size_t put = fwrite(plain + CBM_HEADER_SIZE, 1, body_len, outf);
+        int dump_err = (put != body_len || fflush(outf) != 0);
+        if (fclose(outf) != 0) dump_err = 1;
+        if (dump_err) {
+            fprintf(stderr, "Error: failed to write %zu bytes to dump file '%s'\n", body_len, dump_plain);
+            goto out;
+        }
+        printf("Dumped %zu bytes of plaintext to '%s'\n", body_len, dump_plain);
+    }
+
     puts("\n--- Plaintext inspection ---");
     fputs("[stats]\n", stdout);
     cbm_inspect_stats(plain + CBM_HEADER_SIZE, body_len, stdout);
@@ -296,12 +369,29 @@ static int container_mode(int argc, char **argv) {
         fprintf(stderr, "Error: TEA re-encryption of %zu-byte body failed\n", body_len);
         goto out;
     }
-    if (memcmp(reenc + CBM_HEADER_SIZE, orig_cipher + CBM_HEADER_SIZE, body_len) != 0) {
-        fprintf(stderr, "Error: re-encrypted body differs from original ciphertext\n");
-        goto out;
+    if (!inject) {
+        if (memcmp(reenc + CBM_HEADER_SIZE, orig_cipher + CBM_HEADER_SIZE, body_len) != 0) {
+            fprintf(stderr, "Error: re-encrypted body differs from original ciphertext\n");
+            goto out;
+        }
+        printf("In-memory encrypt(decrypt(x)) == x OK (%zu body bytes, header preserved)\n",
+               body_len);
+    } else {
+        /* For an injected body, equality to the original ciphertext is not
+         * expected; prove the re-encryption is reversible instead. */
+        unsigned char check[CBM_CONTAINER_SIZE];
+        memcpy(check, reenc, CBM_CONTAINER_SIZE);
+        if (cbm_cbc_decrypt(check + CBM_HEADER_SIZE, body_len, CBM_TEA_KEY) != 0) {
+            fprintf(stderr, "Error: TEA decryption of re-encrypted body failed\n");
+            goto out;
+        }
+        if (memcmp(check + CBM_HEADER_SIZE, plain + CBM_HEADER_SIZE, body_len) != 0) {
+            fprintf(stderr, "Error: re-encrypted body is not reversible to injected plaintext\n");
+            goto out;
+        }
+        printf("In-memory re-encryption of modified body OK (%zu body bytes, reversible, header preserved)\n",
+               body_len);
     }
-    printf("In-memory encrypt(decrypt(x)) == x OK (%zu body bytes, header preserved)\n",
-           body_len);
 
     if (output) {
         if (cbm_file_is_blockdev(output)) {
