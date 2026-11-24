@@ -11,6 +11,15 @@ CFLAGS = -m32 -O2 -g -Wall -Wextra -Wformat=2 -Werror=format-security \
          -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2
 LDFLAGS = -m32 -Wl,-z,relro,-z,now
 
+# Phase 0 / H2-H3: sanitizer and coverage-guided fuzzing.
+# These rebuild in place, run every binary, then restore the normal build.
+SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer
+FUZZ_SECONDS ?= 60
+FUZZ_CC = clang
+FUZZ_CFLAGS = -m32 -O1 -g -Wall -Wextra -fsanitize=fuzzer,address \
+              -fno-omit-frame-pointer -I.
+FUZZ_BINS = fuzz_tea fuzz_container fuzz_decode fuzz_layout fuzz_scan
+
 TARGET = cbm-tool
 CLI = pe-call
 TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui
@@ -91,7 +100,46 @@ test: $(TESTS) $(TARGET)
 test-cli: $(TARGET)
 	sh ./test_backend_cli.sh
 
-clean:
-	rm -f $(TARGET) $(CLI) $(TESTS) *.o
+# H2: rebuild every binary with ASan+UBSan, run the whole suite, then restore
+# the normal build. The trap guarantees restoration even on a failing test.
+ASAN_CFLAGS = $(CFLAGS) $(SAN_FLAGS) -O1
+ASAN_LDFLAGS = $(LDFLAGS) $(SAN_FLAGS)
 
-.PHONY: all test test-cli clean
+asan:
+	@set -e; \
+	trap '$(MAKE) clean >/dev/null 2>&1 || true; $(MAKE) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" all >/dev/null 2>&1 || true' EXIT; \
+	$(MAKE) clean; \
+	ASAN_OPTIONS=detect_leaks=1 $(MAKE) CFLAGS="$(ASAN_CFLAGS)" LDFLAGS="$(ASAN_LDFLAGS)" test
+
+# H3: five libFuzzer harnesses. clang is required because gcc has no libFuzzer.
+fuzz_tea: fuzz/fuzz_tea.c tea_native.c tea_native.h
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -o $@ fuzz/fuzz_tea.c tea_native.c
+
+fuzz_container: fuzz/fuzz_container.c cbm_container.c tea_crypto.c tea_native.c pelib.c
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -o $@ fuzz/fuzz_container.c cbm_container.c tea_crypto.c tea_native.c pelib.c
+
+fuzz_decode: fuzz/fuzz_decode.c cbm_decode.c
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -o $@ fuzz/fuzz_decode.c cbm_decode.c
+
+fuzz_layout: fuzz/fuzz_layout.c cbm_layout.c
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -o $@ fuzz/fuzz_layout.c cbm_layout.c
+
+fuzz_scan: fuzz/fuzz_scan.c cbm_scan.c cbm_fuzz.c cbm_container.c cbm_decode.c cbm_file.c paced_write.c tea_crypto.c tea_native.c pelib.c
+	$(FUZZ_CC) $(FUZZ_CFLAGS) -o $@ fuzz/fuzz_scan.c cbm_scan.c cbm_fuzz.c cbm_container.c cbm_decode.c cbm_file.c paced_write.c tea_crypto.c tea_native.c pelib.c
+
+fuzz: $(FUZZ_BINS)
+	@set -e; \
+	mkdir -p /tmp/opencode/fuzz-artifacts; \
+	for b in $(FUZZ_BINS); do \
+	  echo "== $$b ($(FUZZ_SECONDS)s) =="; \
+	  ASAN_OPTIONS=detect_leaks=0 ./$$b -max_total_time=$(FUZZ_SECONDS) \
+	    -artifact_prefix=/tmp/opencode/fuzz-artifacts/$$b- \
+	    -print_final_stats=1 > /tmp/opencode/fuzz-$$b.log 2>&1 || \
+	    { tail -30 /tmp/opencode/fuzz-$$b.log; exit 1; }; \
+	  tail -3 /tmp/opencode/fuzz-$$b.log; \
+	done
+
+clean:
+	rm -f $(TARGET) $(CLI) $(TESTS) $(FUZZ_BINS) *.o
+
+.PHONY: all test test-cli asan fuzz $(FUZZ_BINS) clean
