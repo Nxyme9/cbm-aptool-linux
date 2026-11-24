@@ -2,7 +2,8 @@
 title: 'Wave 5D — doctor + live TUI'
 type: 'feature'
 created: '2026-11-24'
-status: 'ready-for-dev'
+baseline_commit: 'e45b7b6'
+status: 'done'
 context:
   - 'docs/superpowers/specs/2026-11-24-brag-rights-design.md'
   - 'AGENTS.md'
@@ -65,12 +66,12 @@ context:
 ## Tasks & Acceptance
 
 **Execution:**
-- [ ] `cbm_doctor.h` / `cbm_doctor.c` — report struct, dry-run diagnosis, guarded repair — isolate every write behind one function so it can be audited alone.
-- [ ] `test_cbm_doctor.c` — dry-run hash unchanged; repair on a corrupted synthetic MBR restores the expected table; each missing flag is refused; backup aliasing is refused — prove the safety contract, not just the happy path.
-- [ ] `cbm_tui.c` (+ `cbm_tui.h` if a render signature is shared) — pure render function over a state struct plus a thin terminal loop — snapshot-testable without a tty.
-- [ ] `test_cbm_tui.c` — snapshot of the render function for a fixed synthetic state, including the tiny-terminal case.
-- [ ] `main.c` — `doctor` and `tui` subcommands, usage text, dispatch after `heatmap`.
-- [ ] `Makefile`, `README.md`, `ARCHITECTURE.md`, `GAPS.md` — build wiring, documented safe defaults, test counts.
+- [x] `cbm_doctor.h` / `cbm_doctor.c` — report struct, dry-run diagnosis, guarded repair — isolate every write behind one function so it can be audited alone.
+- [x] `test_cbm_doctor.c` — dry-run hash unchanged; repair on a corrupted synthetic MBR restores the expected table; each missing flag is refused; backup aliasing is refused — prove the safety contract, not just the happy path.
+- [x] `cbm_tui.c` (+ `cbm_tui.h` if a render signature is shared) — pure render function over a state struct plus a thin terminal loop — snapshot-testable without a tty.
+- [x] `test_cbm_tui.c` — snapshot of the render function for a fixed synthetic state, including the tiny-terminal case.
+- [x] `main.c` — `doctor` and `tui` subcommands, usage text, dispatch after `heatmap`.
+- [x] `Makefile`, `README.md`, `ARCHITECTURE.md`, `GAPS.md` — build wiring, documented safe defaults, test counts.
 
 **Acceptance Criteria:**
 - Given a valid DJ image, when `doctor` runs without repair flags, then the image hash is unchanged and the report names the geometry.
@@ -95,3 +96,68 @@ context:
 **Manual checks:**
 - Inspect `git diff` for any write path outside the single repair function.
 - Confirm no test opens `/dev/*`.
+
+## Suggested Review Order
+
+**Write-path safety (doctor)**
+
+- The only function that writes the target: fixed read → backed-up and verified sector → validated candidate → LBA 0 → read-back sequence.
+  [`cbm_doctor.c:250`](../../../cbm_doctor.c#L250)
+
+- The single authorisation predicate shared by the report and the repair gate (unparseable OR DJ-shaped-but-invalid; foreign and valid DJ tables refused).
+  [`cbm_doctor.c:115`](../../../cbm_doctor.c#L115)
+
+- Atomic backup claim: `O_EXCL|O_NOFOLLOW`, then `fstat` device/inode comparison against the source before the MBR write.
+  [`cbm_doctor.c:155`](../../../cbm_doctor.c#L155)
+
+- Block devices sized with `BLKGETSIZE64`; regular files keep their exact `st_size`.
+  [`cbm_doctor.c:43`](../../../cbm_doctor.c#L43)
+
+- CLI gate: all three flags atomic, `--window-gib` 26..28 enforced in both dry-run and repair.
+  [`cbm_doctor.c:403`](../../../cbm_doctor.c#L403)
+
+- Failure wording separates a refusal from a post-write verification failure and always names the backup.
+  [`cbm_doctor.c:366`](../../../cbm_doctor.c#L366)
+
+**Diagnosis**
+
+- Read-only report; the `Repairable:` line comes from the same predicate as the write gate.
+  [`cbm_doctor.c:195`](../../../cbm_doctor.c#L195)
+
+**TUI**
+
+- Pure render entry point: no I/O, deterministic bytes, width-bounded.
+  [`cbm_tui.c:251`](../../../cbm_tui.c#L251)
+
+- One-row `n`/`p` scroll arithmetic, unit-tested in isolation.
+  [`cbm_tui.c:239`](../../../cbm_tui.c#L239)
+
+- Terminal loop: real size/window/MBR/backend, q/ESC exit, raw mode restored on every path.
+  [`main.c:1171`](../../../main.c#L1171)
+
+**Geometry**
+
+- Nominal constructor (512 MiB FAT32 / 4 GiB ext4 / remainder exFAT); conventions documented, never claimed as measured.
+  [`cbm_layout.c:28`](../../../cbm_layout.c#L28)
+
+**Tests**
+
+- Alias variants (hardlink, symlink, under-source) and the `O_EXCL` collision partial-step proof.
+  [`test_cbm_doctor.c:574`](../../../test_cbm_doctor.c#L574)
+
+- Read-back failure prefix and step reporting.
+  [`test_cbm_doctor.c:639`](../../../test_cbm_doctor.c#L639)
+
+- Exact-byte snapshot and the scroll-to-partition-table render.
+  [`test_cbm_tui.c:74`](../../../test_cbm_tui.c#L74)
+
+- Doctor dry-run `sha256sum` proof in the shell suite.
+  [`test_backend_cli.sh:137`](../../../test_backend_cli.sh#L137)
+
+**Dispatch and docs**
+
+- `doctor` and `tui` dispatch before the legacy device path.
+  [`main.c:1315`](../../../main.c#L1315)
+
+- Observed totals and the documented safe defaults.
+  [`README.md:87`](../../../README.md#L87)
