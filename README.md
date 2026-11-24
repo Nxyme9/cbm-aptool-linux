@@ -83,14 +83,14 @@ sequences and golden vectors.
     make clean && make && make test
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
-with 32-bit zlib-ng 1.3.1). Expected: 126/126 PASS across eighteen suites
-(tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3, layout 5, nand 3,
-cbm_file 5, cbm_inspect 9, pelib 19, decode 11, backend_cli 4, diff 11,
-fuzz 5, scan 10, scan_report 4, entropy_map 8, png_write 5). The four 5A
-PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
-`test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; eleven
-`test_pelib` cases need the vendor PE and fail without it. The remaining 111
-checks need no vendor binary.
+with 32-bit zlib-ng 1.3.1). Observed on this tree (2026-11-24) with the full
+chain `make clean && make && make test && sh test_backend_cli.sh`: **131 passing
+checks across 20 `Results:` lines / 148 `TEST:` lines, 0 failures**. Wave 5D
+adds three deterministic constructor checks to `test_layout` (5 -> 8), the
+12-check `test_cbm_doctor` suite and the 5-check `test_cbm_tui` suite. The
+shell CLI suite appears twice in that log because the chain runs it both
+inside `make test` and explicitly. All fixtures are synthetic regular files;
+no device is required.
 
 ## Device validation
 
@@ -206,6 +206,43 @@ MBR degrades to TAIL only. The PNG is a **minimal self-written encoder**
 library is used. A full 500 GiB device pass is a separate **hardware-gated**
 step and is NOT implied by a green test run; the automated suite uses
 synthetic regular files only.
+
+## Guarded MBR doctor (repair is opt-in)
+
+    ./cbm-tool doctor <device|image> [--window-gib 26|27|28]
+    ./cbm-tool doctor <device|image> --repair-mbr --yes --backup <file>
+                     [--window-gib 26|27|28]
+
+The default is **READ-ONLY diagnosis**: any readable image is reported (DJ,
+parsable non-DJ, or invalid signature) and nothing is written. Repair occurs
+only when all three flags are present. The backup path is refused first by the
+shared scan alias guard (same inode, `realpath` match, or path under the
+source), before either path is opened. The nominal candidate is built by
+`cbm_layout_construct` and must pass `cbm_layout_parse` + `cbm_layout_validate`
+with `disk_sectors = max(target_size/512, CBM_EXPECTED_WINDOW_SECTORS)`. Repair
+then follows one fixed verified sequence: read LBA 0 → write backup → re-read
+backup + `memcmp` → write the reconstructed LBA 0 via `cbm_file_write` → read
+back + `memcmp` → report every step. Only LBA 0 of the target is ever written.
+An already-valid DJ MBR, a parsable non-DJ (foreign) table, or a target smaller
+than `--window-gib` is refused (exit 1); missing flags or an aliased backup are
+exit 2. Exit codes: 0 success, 1 runtime/refusal, 2 usage.
+
+Geometry is a **nominal convention from frozen spec Design Note 2, not a
+vendor measurement**: DJ_BOOT LBA 2048 / 1048576 LBAs / type `0x0c`, DJ_OS LBA
+1050624 / 8388608 LBAs / type `0x83`, DJ_DATA LBA 9439232 / window remainder /
+type `0x07`, zero CHS bytes, signature `0x55AA`. Supported windows are 26..28
+GiB; a 29 GiB request is rejected with an error containing `26..28`.
+
+## Strictly read-only TUI
+
+    ./cbm-tool tui <device|image>
+
+Renders one ANSI frame from `cbm_tui_render`, a **pure** function of a supplied
+state plus terminal dimensions: no tty probe inside the renderer, no file or
+device I/O and no key-driven writes. State is gathered through the read-only
+`doctor` report. The layout degrades from full 80x24 to compact 40x15 to tiny,
+then to a single complete line at zero dimensions. `q`/ESC consumes one
+keystroke; the target is never opened for writing.
 
 ## PE framework
 

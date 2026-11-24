@@ -19,6 +19,13 @@
  *                            [--out <png>] [--json <path>]
  *                            read-only block-entropy PNG + JSON sidecar;
  *                            writes nothing without --out/--json
+ *   cbm-tool doctor <device|image> [--repair-mbr --yes --backup <file>]
+ *                            [--window-gib 26|27|28]
+ *                            default READ-ONLY diagnosis; repair only with
+ *                            all three flags plus a verified backup
+ *   cbm-tool tui <device|image>
+ *                            strictly read-only ANSI live view; q/ESC quits,
+ *                            never opens the target for writing
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +56,8 @@
 #include "cbm_scan_report.h"
 #include "entropy_map.h"
 #include "png_write.h"
+#include "cbm_doctor.h"
+#include "cbm_tui.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -1144,15 +1153,97 @@ out:
     return rc;
 }
 
+/* ---- strictly read-only ANSI live TUI ---------------------------------- */
+static void print_tui_usage(const char *prog) {
+    fprintf(stderr,
+            "Usage: %s tui <device|image>\n"
+            "  read-only ANSI live view; q/ESC quits. No target writes.\n"
+            "  Exit: 0 ok, 1 runtime error, 2 usage error.\n",
+            prog);
+}
+
+/* The frame comes only from cbm_tui_render (pure) fed by cbm_doctor_report
+ * (read-only). This function never calls usb_mass_open or any write path, so
+ * even a device target is opened for reads only. */
+static int tui_mode(int argc, char **argv) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    if (!path || !path[0]) {
+        fprintf(stderr, "Error: tui requires a device or image path\n");
+        print_tui_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        fprintf(stderr, "Error: unknown tui option '%s'\n", argv[i]);
+        print_tui_usage(argv[0]);
+        return 2;
+    }
+
+    char err[256] = {0};
+    cbm_doctor_report_t r;
+    if (cbm_doctor_report(path, 26ULL, &r, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
+
+    cbm_tui_state_t st;
+    memset(&st, 0, sizeof(st));
+    snprintf(st.target, sizeof(st.target), "%s", path);
+    st.size_bytes = r.size_bytes;
+    st.window_gib = r.window_gib;
+    st.is_blockdev = cbm_file_is_blockdev(path);
+    snprintf(st.mbr_status, sizeof(st.mbr_status), "%s", r.mbr_ok ? "VALID" : "INVALID");
+    snprintf(st.dj_status, sizeof(st.dj_status), "%s", r.dj_ok ? "VALID" : "INVALID");
+
+    cbm_layout_t L;
+    if (cbm_layout_parse(r.candidate, CBM_SECTOR_SIZE, &L) == 0) {
+        static const char *names[4] = {"DJ_BOOT", "DJ_OS", "DJ_DATA", "PART3"};
+        int n = L.part_count > 4 ? 4 : L.part_count;
+        for (int i = 0; i < n; i++) {
+            snprintf(st.parts[i].name, sizeof(st.parts[i].name), "%s", names[i]);
+            st.parts[i].start_lba = L.parts[i].start_lba;
+            st.parts[i].sectors = L.parts[i].size_lba;
+            st.parts[i].type = L.parts[i].type;
+            st.parts[i].inferred = 1; /* nominal convention, not measured */
+        }
+        st.part_count = n;
+    }
+    snprintf(st.backend, sizeof(st.backend), "native");
+
+    size_t w = 80, h = 24;
+    struct winsize ws;
+    if (isatty(STDIN_FILENO) &&
+        ioctl(STDIN_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col && ws.ws_row) {
+        w = ws.ws_col;
+        h = ws.ws_row;
+    }
+    st.term_width = w;
+    st.term_height = h;
+
+    char *frame = cbm_tui_render(&st, w, h);
+    if (!frame) {
+        fprintf(stderr, "Error: out of memory rendering TUI frame\n");
+        return 1;
+    }
+    fputs(frame, stdout);
+    fflush(stdout);
+    free(frame);
+
+    /* Consume one keystroke so `printf 'q' | ...` is a clean single frame.
+     * No key ever triggers a write: this mode is read-only by construction. */
+    (void)getchar();
+    return 0;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
     /* Container/fuzz/scan modes load the crypto backend themselves and must
      * not run the selftest first (that would init/cleanup TEA twice). diff and
-     * heatmap are pure byte analysis and need no crypto at all. All five
-     * subcommands are dispatched before the device path so nothing can be
-     * mistaken for a block-device argument. */
+     * heatmap are pure byte analysis and need no crypto at all. doctor/tui are
+     * read-only diagnostics except the explicitly authorised repair path.
+     * All seven subcommands are dispatched before the device path so nothing
+     * can be mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
         return container_mode(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "diff") == 0)
@@ -1163,6 +1254,10 @@ int main(int argc, char **argv) {
         return scan_mode(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "heatmap") == 0)
         return heatmap_mode(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "doctor") == 0)
+        return cbm_doctor_cli(argc, argv, stdout, stderr);
+    if (argc >= 2 && strcmp(argv[1], "tui") == 0)
+        return tui_mode(argc, argv);
 
     if (selftest() != 0) return 1;
     if (argc > 1) return verify_device(argv[1]);

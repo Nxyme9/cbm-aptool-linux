@@ -40,4 +40,6 @@ test_tea_native
 test_pelib
 test_entropy_map
 test_png_write
+test_cbm_doctor
+test_cbm_tui
 pe-call

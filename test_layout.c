@@ -106,6 +106,81 @@ static void test_validate_wrong_partcount(void) {
     PASS();
 }
 
+static unsigned int fixture_rd32(const unsigned char *p) {
+    return (unsigned int)p[0] | ((unsigned int)p[1] << 8) |
+           ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+/* Nominal constructor: byte-exact, stable, and accepted by the existing
+ * validator. The byte values are conventions from the frozen spec, NOT
+ * measurements recovered from a vendor stick. */
+static void test_construct_nominal_stable_and_valid(void) {
+    TEST("cbm_layout_construct: nominal bytes stable and validator accepts candidate");
+    unsigned char a[CBM_SECTOR_SIZE], b[CBM_SECTOR_SIZE];
+    char err[128] = {0};
+    if (cbm_layout_construct(26ULL, a, err, sizeof(err)) != 0) {
+        FAIL("26 GiB construction failed"); return;
+    }
+    if (cbm_layout_construct(26ULL, b, err, sizeof(err)) != 0) {
+        FAIL("second construction failed"); return;
+    }
+    if (memcmp(a, b, sizeof(a)) != 0) { FAIL("constructor not deterministic"); return; }
+    if (a[510] != 0x55 || a[511] != 0xaa) { FAIL("signature"); return; }
+    const unsigned char *e0 = a + 446;
+    const unsigned char *e1 = e0 + 16;
+    const unsigned char *e2 = e1 + 16;
+    if (e0[0] != 0 || e1[0] != 0 || e2[0] != 0) { FAIL("boot flag must be 0"); return; }
+    for (int i = 0; i < 3; i++) {
+        const unsigned char *e = a + 446 + i * 16;
+        for (int k = 1; k <= 3; k++) if (e[k] != 0) { FAIL("CHS must be zero"); return; }
+        for (int k = 5; k <= 7; k++) if (e[k] != 0) { FAIL("CHS must be zero"); return; }
+    }
+    if (e0[4] != 0x0c || e1[4] != 0x83 || e2[4] != 0x07) { FAIL("type bytes"); return; }
+    if (fixture_rd32(e0 + 8) != 2048u || fixture_rd32(e0 + 12) != 1048576u ||
+        fixture_rd32(e1 + 8) != 1050624u || fixture_rd32(e1 + 12) != 8388608u ||
+        fixture_rd32(e2 + 8) != 9439232u || fixture_rd32(e2 + 12) != 45086720u) {
+        FAIL("start/size LBAs"); return;
+    }
+    cbm_layout_t L;
+    if (cbm_layout_parse(a, CBM_SECTOR_SIZE, &L) != 0) { FAIL("parse candidate"); return; }
+    if (cbm_layout_validate(&L, CBM_EXPECTED_WINDOW_SECTORS) != 0) {
+        FAIL("validate candidate"); return;
+    }
+    PASS();
+}
+
+static void test_construct_27_window_validates(void) {
+    TEST("cbm_layout_construct: 27 GiB window validates with honest floored disk size");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    char err[128] = {0};
+    if (cbm_layout_construct(27ULL, mbr, err, sizeof(err)) != 0) {
+        FAIL("27 GiB construction failed"); return;
+    }
+    cbm_layout_t L;
+    if (cbm_layout_parse(mbr, CBM_SECTOR_SIZE, &L) != 0) { FAIL("parse"); return; }
+    const unsigned long long expect_data = 27ULL * 2097152ULL - 9439232ULL;
+    if (L.parts[2].size_lba != expect_data) { FAIL("27 GiB data remainder"); return; }
+    if (cbm_layout_validate(&L, CBM_EXPECTED_WINDOW_SECTORS) != 0) {
+        FAIL("27 GiB candidate must validate"); return;
+    }
+    PASS();
+}
+
+static void test_construct_rejects_out_of_window(void) {
+    TEST("cbm_layout_construct: 29 GiB honestly rejected, buffer untouched");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    char err[128] = {0};
+    memset(mbr, 0xa5, sizeof(mbr));
+    if (cbm_layout_construct(29ULL, mbr, err, sizeof(err)) == 0) {
+        FAIL("out-of-window must be rejected"); return;
+    }
+    if (!strstr(err, "26..28")) { FAIL("error must name supported window"); return; }
+    for (size_t i = 0; i < sizeof(mbr); i++) {
+        if (mbr[i] != 0xa5) { FAIL("buffer changed on rejection"); return; }
+    }
+    PASS();
+}
+
 int main(void) {
     printf("=== CBM Layout Tests ===\n");
     test_parse_valid();
@@ -113,6 +188,9 @@ int main(void) {
     test_validate_ok();
     test_validate_too_small_disk();
     test_validate_wrong_partcount();
+    test_construct_nominal_stable_and_valid();
+    test_construct_27_window_validates();
+    test_construct_rejects_out_of_window();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

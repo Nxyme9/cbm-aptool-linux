@@ -2,7 +2,7 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(126/126 across eighteen suites, including CLI backend selection) and the
+(131 passing checks across twenty suites, including CLI backend selection) and the
 real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
@@ -321,10 +321,7 @@ section-copy loop.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`; the `cbm-tool` target also
-links `-lz`. Produces `cbm-tool`, the `pe-call` CLI, seventeen test binaries
-and one shell CLI suite. All 126 checks pass across eighteen suites
-(`test_tea` 6, `test_tea_native` 8, `test_cbm` 5, `test_paced` 5,
-`test_usb_mass` 3, `test_layout` 5, `test_nand` 3, `test_cbm_file` 5,
-`test_cbm_inspect` 9, `test_pelib` 19, `test_cbm_decode` 11,
-`test_backend_cli.sh` 4, `test_cbm_diff` 11, `test_cbm_fuzz` 5, `test_cbm_scan`
-10, `test_cbm_scan_report` 4, `test_entropy_map` 8, `test_png_write` 5).
+links `-lz`. Produces `cbm-tool`, the `pe-call` CLI, nineteen test binaries
+and one shell CLI suite. All 131 checks pass across twenty suites (the eighteen
+prior plus `test_cbm_doctor` and `test_cbm_tui`); the observed full verification
+log has 20 `Results:` lines and 148 `TEST:` lines with 0 failures.

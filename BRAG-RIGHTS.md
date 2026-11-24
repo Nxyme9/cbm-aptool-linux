@@ -69,4 +69,4 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 126/126 checks across eighteen suites, MIT.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 131 passing checks across 20 `Results:` lines / 148 `TEST:` lines, MIT. The doctor repair path needs `--repair-mbr --yes --backup`; the TUI is read-only by construction.
