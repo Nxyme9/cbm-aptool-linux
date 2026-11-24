@@ -25,6 +25,12 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 - **MBR/DJ layout validator** — DJ_BOOT 512 MiB FAT32 / DJ_OS 4 GiB ext4 /
   DJ_DATA rest exFAT, 26 GiB MBR window, 28 GiB (28672 MiB) accepted stick.
 - **NAND controller identity probe** — Chipsbank-class (VID 048d / PID 1234).
+- **CBM container tool** — `cbm-tool container <path>`: reads an 85688-byte
+  container, TEA-decrypts the body, inspects it (hex dump, strings, stats,
+  tokens), re-encrypts and verifies the roundtrip. Writes nothing by default;
+  `--output <path>` and `--write-back` commit the re-encrypted container
+  (block-device targets use paced writes). Also supports `--offset N`,
+  `--hex-full` and `--min-string N`.
 
 ## Not recovered (see GAPS.md)
 
@@ -36,13 +42,28 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 25/25 PASS.
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 39/39 PASS
+across eight test suites.
 
 ## Device validation
 
     ./cbm-tool /dev/sdX
 
 See [docs/device-validation.md](docs/device-validation.md) (serial redacted).
+
+## Container inspection
+
+    ./cbm-tool container container.bin
+    ./cbm-tool container /dev/sdX --offset 1048576 --hex-full
+    ./cbm-tool container container.bin --output container.reenc
+
+Reads an 85688-byte CBM container, decrypts and inspects the body, then
+re-encrypts it and verifies the roundtrip without modifying the target. Add
+`--output <path>` to save the re-encrypted container to a new file, or
+`--write-back` to replace the original (block devices use paced writes).
+`--offset N` selects a byte offset on block devices; `--hex-full` dumps every
+byte instead of the default first 320 + last 320; `--min-string N` sets the
+minimum printable-string length (default 4).
 
 ## PE harness
 

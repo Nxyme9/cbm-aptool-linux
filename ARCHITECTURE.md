@@ -2,7 +2,7 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(25/25) and the real-device validation mode (`cbm-tool <blockdev>`).
+(39/39) and the real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
@@ -75,8 +75,44 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
 - `cbm-tool <blockdev>`: self-test + real-device validation (read-only layout
   checks, then safe write/read/restore roundtrip in the unpartitioned tail
   outside the MBR window — no filesystem data touched).
+- `cbm-tool container <path>`: file-level container mode — reads an
+  85688-byte CBM container, TEA-decrypts the body, inspects it (hex dump,
+  strings, stats, tokens), re-encrypts and verifies the roundtrip. Writes
+  nothing unless `--output <path>` or `--write-back` is given (safe
+  default); block-device targets use paced writes. Also supports `--offset`,
+  `--hex-full` and `--min-string`.
 - PE path overridable via `CBM_PE_PATH` env var (default
   `/tmp/opencode/ap.exe`).
+
+## 8. File-level container I/O (`cbm_file.{h,c}`, `cbm_inspect.{h,c}`)
+
+### 8.1 cbm_file — file/device I/O abstraction
+
+- `cbm_file_read(path, offset, buf, len)`: read `len` bytes at absolute byte
+  offset into `buf`. Returns 0 on success, -1 on error.
+- `cbm_file_write(path, offset, buf, len)`: write `len` bytes from `buf` at
+  absolute byte offset. Block-device targets use paced writes (40 MiB bursts
+  / 45 s cooldown); regular files are written directly. Returns 0 on success,
+  -1 on error.
+- `cbm_file_is_blockdev(path)`: return 1 when `path` is a block device, 0
+  otherwise (including stat failure).
+- Backs the container mode's read/write/roundtrip path and the device
+  validation flow.
+- Unit tests: `test_cbm_file` (5/5).
+
+### 8.2 cbm_inspect — container inspection
+
+- `cbm_inspect_hex(buf, len, max_bytes, out)`: hex dump with ASCII sidebar.
+  When `max_bytes > 0`, shows the first `max_bytes/2` and last `max_bytes/2`
+  bytes (or all bytes when `max_bytes >= len`); when 0, shows all bytes.
+- `cbm_inspect_strings(buf, len, min_run, out)`: extracts runs of printable
+  ASCII (0x20–0x7e) of length >= `min_run`, printing offset and string.
+  Never reads past `buf+len`.
+- `cbm_inspect_stats(buf, len, out)`: prints size, printable byte count,
+  unique byte count and Shannon entropy.
+- `cbm_inspect_tokens(buf, len, out)`: searches for known tokens and reports
+  offset + token for each hit.
+- Unit tests: `test_cbm_inspect` (9/9).
 
 ## Data flow (device validation)
 
@@ -94,4 +130,4 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool` plus
-six test binaries. All 25 tests pass.
+eight test binaries. All 39 tests pass.
