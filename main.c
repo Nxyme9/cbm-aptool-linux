@@ -37,6 +37,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <termios.h>
 #include <linux/fs.h>
 
 #include "tea_crypto.h"
@@ -1185,29 +1188,54 @@ static int tui_mode(int argc, char **argv) {
         return 1;
     }
 
+    /* Window is derived from the measured size: the largest supported window
+     * that fits, else 26 (which naturally reports window_consistent=no). */
+    const unsigned long long gib = 1024ULL * 1024ULL * 1024ULL;
+    unsigned long long window = 26ULL;
+    if (r.size_bytes >= 28ULL * gib) window = 28ULL;
+    else if (r.size_bytes >= 27ULL * gib) window = 27ULL;
+    if (window != 26ULL && cbm_doctor_report(path, window, &r, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 1;
+    }
+
+    /* Display the ACTUAL first sector, never the nominal candidate. A MBR
+     * that does not parse shows zero partition rows and mbr_status=INVALID. */
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    if (cbm_file_read(path, 0, mbr, sizeof(mbr)) != 0) {
+        fprintf(stderr, "Error: cannot read first sector for TUI\n");
+        return 1;
+    }
+    cbm_layout_t actual;
+    int parsed = (cbm_layout_parse(mbr, sizeof(mbr), &actual) == 0);
+
     cbm_tui_state_t st;
     memset(&st, 0, sizeof(st));
     snprintf(st.target, sizeof(st.target), "%s", path);
     st.size_bytes = r.size_bytes;
-    st.window_gib = r.window_gib;
+    st.window_gib = window;
     st.is_blockdev = cbm_file_is_blockdev(path);
-    snprintf(st.mbr_status, sizeof(st.mbr_status), "%s", r.mbr_ok ? "VALID" : "INVALID");
+    snprintf(st.mbr_status, sizeof(st.mbr_status), "%s", parsed ? "VALID" : "INVALID");
     snprintf(st.dj_status, sizeof(st.dj_status), "%s", r.dj_ok ? "VALID" : "INVALID");
-
-    cbm_layout_t L;
-    if (cbm_layout_parse(r.candidate, CBM_SECTOR_SIZE, &L) == 0) {
+    if (parsed) {
         static const char *names[4] = {"DJ_BOOT", "DJ_OS", "DJ_DATA", "PART3"};
-        int n = L.part_count > 4 ? 4 : L.part_count;
+        int n = actual.part_count > 4 ? 4 : actual.part_count;
         for (int i = 0; i < n; i++) {
             snprintf(st.parts[i].name, sizeof(st.parts[i].name), "%s", names[i]);
-            st.parts[i].start_lba = L.parts[i].start_lba;
-            st.parts[i].sectors = L.parts[i].size_lba;
-            st.parts[i].type = L.parts[i].type;
-            st.parts[i].inferred = 1; /* nominal convention, not measured */
+            st.parts[i].start_lba = actual.parts[i].start_lba;
+            st.parts[i].sectors = actual.parts[i].size_lba;
+            st.parts[i].type = actual.parts[i].type;
+            st.parts[i].inferred = 0; /* read from the device's real MBR */
         }
         st.part_count = n;
     }
-    snprintf(st.backend, sizeof(st.backend), "native");
+    snprintf(st.backend, sizeof(st.backend), "%s",
+             cbm_backend_get() == CBM_BACKEND_PE ? "pe" : "native");
+    memcpy(st.hex, mbr, sizeof(st.hex));
+    st.hex_len = sizeof(st.hex);
+    st.hex_scroll = 0;
+    /* scan_hits/last_hit_offset/entropy stay zero: the renderer prints n/a
+     * because this mode does not run a scan or an entropy sampler. */
 
     size_t w = 80, h = 24;
     struct winsize ws;
@@ -1219,19 +1247,54 @@ static int tui_mode(int argc, char **argv) {
     st.term_width = w;
     st.term_height = h;
 
-    char *frame = cbm_tui_render(&st, w, h);
-    if (!frame) {
-        fprintf(stderr, "Error: out of memory rendering TUI frame\n");
-        return 1;
+    int tty = isatty(STDIN_FILENO);
+    struct termios saved, raw;
+    if (tty) {
+        if (tcgetattr(STDIN_FILENO, &saved) != 0) return 1;
+        raw = saved;
+        cfmakeraw(&raw);
+        if (tcsetattr(STDIN_FILENO, TCSANOW, &raw) != 0) return 1;
     }
-    fputs(frame, stdout);
-    fflush(stdout);
-    free(frame);
 
-    /* Consume one keystroke so `printf 'q' | ...` is a clean single frame.
-     * No key ever triggers a write: this mode is read-only by construction. */
-    (void)getchar();
-    return 0;
+    int rc = 1;
+    for (;;) {
+        char *frame = cbm_tui_render(&st, w, h);
+        if (!frame) {
+            fprintf(stderr, "Error: out of memory rendering TUI frame\n");
+            goto done;
+        }
+        fputs(frame, stdout);
+        fflush(stdout);
+        free(frame);
+        if (!tty) {
+            /* Canonical / piped input: never block waiting for a key. */
+            fd_set rd;
+            struct timeval tv;
+            FD_ZERO(&rd);
+            FD_SET(STDIN_FILENO, &rd);
+            tv.tv_sec = 0;
+            tv.tv_usec = 0;
+            if (select(STDIN_FILENO + 1, &rd, NULL, NULL, &tv) <= 0) {
+                rc = 0;
+                break;
+            }
+        }
+        int key = getchar();
+        if (key == EOF || key == 'q' || key == '\033') {
+            rc = 0;
+            break;
+        }
+        if (key == 'n') {
+            size_t max = st.hex_len / 16u;
+            if (st.hex_scroll < max)
+                st.hex_scroll = (st.hex_scroll + 16u <= max) ? st.hex_scroll + 16u : max;
+        } else if (key == 'p') {
+            st.hex_scroll = st.hex_scroll >= 16u ? st.hex_scroll - 16u : 0u;
+        }
+    }
+done:
+    if (tty) (void)tcsetattr(STDIN_FILENO, TCSANOW, &saved); /* always restore */
+    return rc;
 }
 
 int main(int argc, char **argv) {

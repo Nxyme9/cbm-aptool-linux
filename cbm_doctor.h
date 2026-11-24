@@ -6,7 +6,9 @@
  * (LBA 0) after every authorisation condition is met:
  *   - explicit --repair-mbr + --yes + --backup at the CLI layer;
  *   - backup path pre-flighted with the shared cbm_scan_report_check_output
- *     guard before either path is opened;
+ *     guard before either path is opened, then re-checked immediately before
+ *     the backup write and claimed with an O_EXCL|O_NOFOLLOW file descriptor
+ *     whose inode is compared with the target's read-only descriptor;
  *   - the nominal candidate must pass cbm_layout_parse + cbm_layout_validate;
  *   - the shared repair_authorised() predicate must agree: either the first
  *     512 bytes fail cbm_layout_parse, OR they parse and are DJ-shaped
@@ -72,6 +74,11 @@ void cbm_doctor_print_report(const cbm_doctor_report_t *r, FILE *out);
 /* Format the LBA-0 read-back failure message. Always names the backup path so
  * the original sector is recoverable; public for deterministic tests. */
 void cbm_doctor_readback_error(char *err, size_t errlen, const char *backup);
+
+/* Exact CLI error prefix for a repair failure. rc == -1 means LBA 0 was
+ * already overwritten and only read-back verification failed; rc == 1 is a
+ * refusal before the target write. Public so the distinction is testable. */
+const char *cbm_doctor_failure_prefix(int rc);
 
 /* Print the full repair step struct (all five step flags plus the backup path)
  * to out. The CLI calls this on EVERY repair failure so the operator can see

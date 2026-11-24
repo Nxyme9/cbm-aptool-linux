@@ -247,14 +247,18 @@ static void test_backup_alias_refused(void) {
     uint64_t before = 0, after = 0;
     char *av[] = {"cbm-tool", "doctor", img, "--repair-mbr", "--yes", "--backup", img, NULL};
     FILE *sink = open_sink("alias.out");
+    char text[1024] = {0};
     cbm_doctor_repair_t out;
     char err[256] = {0};
     int ok = (sink != NULL && make_image(img, mbr, 28ULL) == 0 && fingerprint(img, &before) == 0);
     if (ok) ok = (cbm_doctor_cli(7, av, sink, sink) == 2);
+    if (ok && sink) fflush(sink);
+    if (ok) read_sink_text("alias.out", text, sizeof(text));
+    if (ok) ok = (strstr(text, "backup refused:") != NULL && strstr(text, "read=") == NULL);
     if (ok) ok = (cbm_doctor_repair(img, img, 26LL, &out, err, sizeof(err)) == 2);
     if (ok) ok = (fingerprint(img, &after) == 0 && before == after);
     if (sink) fclose(sink);
-    if (ok) PASS(); else FAIL("backup alias must be refused before any write");
+    if (ok) PASS(); else FAIL("backup alias must be refused before any write or step flag");
 }
 
 static void test_already_valid_refused(void) {
@@ -469,14 +473,179 @@ static void test_cli_failure_prints_full_steps(void) {
     if (ok && sink) fflush(sink);
     if (ok) {
         read_sink_text("steps.out", text, sizeof(text));
-        ok = (strstr(text, "read=") != NULL && strstr(text, "backup_written=") != NULL &&
-              strstr(text, "backup_verified=") != NULL &&
-              strstr(text, "mbr_written=") != NULL &&
-              strstr(text, "readback_verified=") != NULL &&
+        ok = (strstr(text, "Refused:") != NULL &&
+              strstr(text, "read=1 backup_written=0 backup_verified=0 "
+                           "mbr_written=0 readback_verified=0") != NULL &&
               strstr(text, bak) != NULL);
     }
     if (sink) fclose(sink);
     if (ok) PASS(); else FAIL("CLI must print the full step struct on repair failure");
+}
+
+/* A real block device cannot be used in a test: this suite is synthetic
+ * regular files only. This fixture proves the regular-file sizing path still
+ * returns the exact byte count; BLKGETSIZE64 remains hardware-gated. */
+static void test_target_size_regular_file_exact_bytes(void) {
+    TEST("doctor: regular-file target size is exact (block-device path needs hardware)");
+    char img[256];
+    path_of(img, sizeof(img), "size-regular.img");
+    int fd = open(img, O_CREAT | O_TRUNC | O_WRONLY, 0600);
+    int ok = (fd >= 0 && ftruncate(fd, 600) == 0);
+    if (fd >= 0) close(fd);
+    cbm_doctor_report_t r;
+    char err[256] = {0};
+    if (ok) ok = (cbm_doctor_report(img, 26ULL, &r, err, sizeof(err)) == 0);
+    if (ok) ok = (r.size_bytes == 600ULL && !r.window_consistent);
+    if (ok) PASS(); else FAIL("regular file size must be exact; block device is INCONCLUSIVE here");
+}
+
+static void test_window_gib_out_of_range_refused_in_both_modes(void) {
+    TEST("doctor: out-of-range/odd --window-gib exits 2 in dry-run and repair");
+    char img[256], bak[256], out[256];
+    path_of(img, sizeof(img), "window-edges.img");
+    path_of(bak, sizeof(bak), "window-edges.bak");
+    path_of(out, sizeof(out), "window-edges.out");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    build_dj_mbr(mbr); mbr[510] = 0; /* would be repairable with a legal window */
+    static const char *bad[] = {" -1", "29", "17179869184", "", "abc"};
+    uint64_t before = 0, after = 0;
+    int ok = (make_image(img, mbr, 28ULL) == 0 && fingerprint(img, &before) == 0);
+    for (size_t i = 0; ok && i < sizeof(bad) / sizeof(bad[0]); i++) {
+        char *dry_av[] = {"cbm-tool", "doctor", img, "--window-gib", (char *)bad[i], NULL};
+        char *fix_av[] = {"cbm-tool", "doctor", img, "--repair-mbr", "--yes",
+                          "--backup", bak, "--window-gib", (char *)bad[i], NULL};
+        char text[1024] = {0};
+        FILE *sink = fopen(out, "w");
+        if (!sink) { ok = 0; break; }
+        if (cbm_doctor_cli(5, dry_av, sink, sink) != 2) ok = 0;
+        if (ok) ok = (access(bak, F_OK) != 0);
+        if (ok && cbm_doctor_cli(9, fix_av, sink, sink) != 2) ok = 0;
+        fflush(sink);
+        fclose(sink);
+        if (ok) read_sink_text("window-edges.out", text, sizeof(text));
+        if (ok) ok = (strstr(text, "CBM Doctor Report") == NULL &&
+                      strstr(text, "Dry run:") == NULL &&
+                      strstr(text, "Repair:") == NULL);
+        /* The two in-range-digit-but-illegal values name the supported range. */
+        if (ok && (i == 1 || i == 2)) ok = (strstr(text, "26..28") != NULL);
+    }
+    if (ok) ok = (fingerprint(img, &after) == 0 && before == after && access(bak, F_OK) != 0);
+    if (ok) PASS(); else FAIL("illegal --window-gib must exit 2 before any report or write");
+}
+
+static void test_report_window_guard_avoids_overflow(void) {
+    TEST("doctor: direct API report with huge window stays inconsistent (no wrap to zero)");
+    char img[256];
+    path_of(img, sizeof(img), "window-huge.img");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    build_dj_mbr(mbr);
+    cbm_doctor_report_t r;
+    char err[256] = {0};
+    int ok = (make_image(img, mbr, 28ULL) == 0);
+    if (ok) ok = (cbm_doctor_report(img, 17179869184ULL, &r, err, sizeof(err)) == 0);
+    if (ok) ok = (!r.window_consistent && !r.repairable &&
+                  strstr(r.repair_reason, "26..28") != NULL);
+    if (ok) PASS(); else FAIL("report must range-check before multiplying window by GiB");
+}
+
+static void test_window_gib_26_still_works(void) {
+    TEST("doctor: --window-gib 26 is still accepted");
+    char img[256], out[256];
+    path_of(img, sizeof(img), "window-26.img");
+    path_of(out, sizeof(out), "window-26.out");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    build_dj_mbr(mbr);
+    char *av[] = {"cbm-tool", "doctor", img, "--window-gib", "26", NULL};
+    FILE *sink = open_sink("window-26.out");
+    char text[1024] = {0};
+    uint64_t before = 0, after = 0;
+    int ok = (sink != NULL && make_image(img, mbr, 28ULL) == 0 && fingerprint(img, &before) == 0);
+    if (ok) ok = (cbm_doctor_cli(5, av, sink, sink) == 0);
+    if (ok && sink) fflush(sink);
+    if (sink) fclose(sink);
+    if (ok) {
+        read_sink_text("window-26.out", text, sizeof(text));
+        ok = (strstr(text, "window=26 GiB") != NULL && strstr(text, "Dry run:") != NULL);
+    }
+    if (ok) ok = (fingerprint(img, &after) == 0 && before == after);
+    if (ok) PASS(); else FAIL("26 GiB window must remain the supported default");
+}
+
+static void test_backup_alias_variants_refused(void) {
+    TEST("doctor: hardlink/symlink/under-source backups are exit 2 with no write");
+    char img[256], hard[256], sym[256], under[320], out[256];
+    path_of(img, sizeof(img), "alias-variants.img");
+    path_of(hard, sizeof(hard), "alias-variants.hard");
+    path_of(sym, sizeof(sym), "alias-variants.sym");
+    path_of(out, sizeof(out), "alias-variants.out");
+    snprintf(under, sizeof(under), "%s/child.bak", img);
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    build_dj_mbr(mbr); mbr[510] = 0;
+    uint64_t before = 0, after = 0;
+    int ok = (make_image(img, mbr, 28ULL) == 0 && fingerprint(img, &before) == 0);
+    if (ok) ok = (link(img, hard) == 0 && symlink(img, sym) == 0);
+    const char *variants[3] = {hard, sym, under};
+    for (size_t i = 0; ok && i < 3; i++) {
+        char *av[] = {"cbm-tool", "doctor", img, "--repair-mbr", "--yes",
+                      "--backup", (char *)variants[i], NULL};
+        FILE *sink = fopen(out, "w");
+        char text[1024] = {0};
+        if (!sink) { ok = 0; break; }
+        if (cbm_doctor_cli(7, av, sink, sink) != 2) ok = 0;
+        fflush(sink);
+        fclose(sink);
+        if (ok) read_sink_text("alias-variants.out", text, sizeof(text));
+        if (ok) ok = (strstr(text, "backup refused:") != NULL &&
+                      strstr(text, "Repair:") == NULL && strstr(text, "read=") == NULL);
+    }
+    if (ok) ok = (fingerprint(img, &after) == 0 && before == after);
+    if (ok) PASS(); else FAIL("every alias variant must be refused before opening the backup");
+}
+
+static void test_backup_creation_collision_shows_partial_steps(void) {
+    TEST("doctor: existing backup is refused with read=1 backup_written=0 step flags");
+    char img[256], bak[256], out[256];
+    path_of(img, sizeof(img), "collision.img");
+    path_of(bak, sizeof(bak), "collision.bak");
+    path_of(out, sizeof(out), "collision.out");
+    unsigned char mbr[CBM_SECTOR_SIZE], junk[CBM_SECTOR_SIZE], check[CBM_SECTOR_SIZE];
+    build_dj_mbr(mbr); mbr[510] = 0;
+    memset(junk, 0xa5, sizeof(junk));
+    uint64_t before = 0, after = 0;
+    int ok = (make_image(img, mbr, 28ULL) == 0 && fingerprint(img, &before) == 0);
+    if (ok) {
+        int fd = open(bak, O_CREAT | O_EXCL | O_WRONLY, 0600);
+        ok = (fd >= 0 && write(fd, junk, sizeof(junk)) == (ssize_t)sizeof(junk));
+        if (fd >= 0) close(fd);
+    }
+    char *av[] = {"cbm-tool", "doctor", img, "--repair-mbr", "--yes", "--backup", bak, NULL};
+    FILE *sink = open_sink("collision.out");
+    char text[2048] = {0};
+    if (ok && !sink) ok = 0;
+    if (ok) ok = (cbm_doctor_cli(7, av, sink, sink) == 1);
+    if (ok && sink) fflush(sink);
+    if (sink) fclose(sink);
+    if (ok) {
+        read_sink_text("collision.out", text, sizeof(text));
+        ok = (strstr(text, "read=1 backup_written=0 backup_verified=0 "
+                           "mbr_written=0 readback_verified=0") != NULL && strstr(text, bak) != NULL);
+    }
+    if (ok) ok = (cbm_file_read(bak, 0, check, sizeof(check)) == 0 &&
+                  memcmp(check, junk, sizeof(check)) == 0);
+    if (ok) ok = (fingerprint(img, &after) == 0 && before == after);
+    if (ok) PASS(); else FAIL("backup collision must report real step flags and leave both files intact");
+}
+
+static void test_readback_failure_prefix_is_exact(void) {
+    TEST("doctor: failure prefix distinguishes completed-write verification failure");
+    char err[256] = {0};
+    int ok = (strcmp(cbm_doctor_failure_prefix(-1),
+                     "FAILED (write completed, verification failed):") == 0 &&
+              strcmp(cbm_doctor_failure_prefix(1), "Refused:") == 0);
+    cbm_doctor_readback_error(err, sizeof(err), "/tmp/opencode/recovery.bak");
+    if (ok) ok = (strstr(err, "/tmp/opencode/recovery.bak") != NULL &&
+                  strstr(err, "read-back") != NULL);
+    if (ok) PASS(); else FAIL("exit -1 must use the completed-write failure prefix");
 }
 
 int main(void) {
@@ -502,6 +671,13 @@ int main(void) {
     test_negative_window_gib_rejected();
     test_readback_error_names_backup();
     test_cli_failure_prints_full_steps();
+    test_target_size_regular_file_exact_bytes();
+    test_window_gib_out_of_range_refused_in_both_modes();
+    test_report_window_guard_avoids_overflow();
+    test_window_gib_26_still_works();
+    test_backup_alias_variants_refused();
+    test_backup_creation_collision_shows_partial_steps();
+    test_readback_failure_prefix_is_exact();
 
     printf("\nScratch fixtures: %s\n", g_root);
     printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);

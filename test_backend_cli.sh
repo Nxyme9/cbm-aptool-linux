@@ -33,7 +33,7 @@ dd if=/dev/zero of="$FIXTURE" bs=85688 count=1 status=none || {
     exit 1
 }
 
-# Synthetic 28-byte MBR-shaped regular image for the read-only TUI CLI rows.
+# Synthetic 512-byte MBR-shaped regular image for the read-only TUI CLI rows.
 # No device node is touched; a zero signature is enough for diagnosis.
 dd if=/dev/zero of="$TUI_IMG" bs=512 count=1 status=none || {
     printf 'FAIL: cannot create synthetic TUI fixture\n'
@@ -120,6 +120,30 @@ if printf 'q' | "$TOOL" tui "$TUI_IMG" >"$tui_out" 2>&1; then
     fi
 else
     FAIL_CASE 'tui on synthetic image did not exit 0'
+fi
+
+# Doctor row: dry run diagnoses a tiny synthetic regular image read-only.
+# sha256sum before/after is the published proof that no byte changed.
+TEST doctor-dry-run-readonly
+DRY_IMG=$SCRATCH/doctor-dry.img
+dd if=/dev/zero of="$DRY_IMG" bs=512 count=1 status=none || {
+    FAIL_CASE 'cannot create synthetic doctor fixture'
+    printf '\nScratch fixtures: %s\n' "$SCRATCH"
+    printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"
+    [ "$failed" -eq 0 ]
+    exit 1
+}
+dry_out="$SCRATCH/doctor-dry.out"
+before=$(sha256sum "$DRY_IMG" | cut -d' ' -f1)
+if "$TOOL" doctor "$DRY_IMG" >"$dry_out" 2>&1; then
+    after=$(sha256sum "$DRY_IMG" | cut -d' ' -f1)
+    if [ "$before" = "$after" ] && grep -Fq 'Dry run: no writes' "$dry_out"; then
+        PASS
+    else
+        FAIL_CASE 'doctor dry run changed the image or omitted the no-writes line'
+    fi
+else
+    FAIL_CASE 'doctor dry run on synthetic image did not exit 0'
 fi
 
 printf '\nScratch fixtures: %s\n' "$SCRATCH"

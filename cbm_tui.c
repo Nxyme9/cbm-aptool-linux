@@ -55,11 +55,12 @@ static void fixed_gib(unsigned long long bytes, char *dst, size_t len) {
 }
 
 static void fixed_double(double v, char *dst, size_t len) {
-    /* (long long)(v * 1e6 + 0.5) is undefined for NaN/Inf and for values
-     * beyond the long-long range. Entropy is a non-negative [0,1] value;
-     * clamp non-finite, negative and oversized inputs deterministically to
-     * 0.0 (also normalising -0.0) so rendering never invokes UB. */
-    if (!isfinite(v) || v <= 0.0 || v > 1000000.0) v = 0.0;
+    /* (long long)(v * 1e6 + 0.5) is undefined for NaN/Inf. Shannon entropy is
+     * bits/byte in [0,8], NOT a [0,1] probability: clamp non-finite and
+     * negative values to 0.0 and anything above 8 to 8.0, so the fixed-point
+     * cast is deterministic and never overflows. -0.0 renders as 0.000000. */
+    if (!isfinite(v) || v < 0.0) v = 0.0;
+    else if (v > 8.0) v = 8.0;
     long long scaled = (long long)(v * 1000000.0 + 0.5);
     long long whole = scaled / 1000000;
     long long frac = scaled % 1000000;
@@ -67,10 +68,43 @@ static void fixed_double(double v, char *dst, size_t len) {
     snprintf(dst, len, "%lld.%06lld", whole, frac);
 }
 
+/* Append at most n bytes, always keeping a NUL inside cap. */
+static size_t append_bounded(char *dst, size_t cap, size_t pos,
+                             const char *text, size_t n) {
+    if (!cap || pos >= cap - 1u) return pos;
+    size_t room = cap - 1u - pos;
+    if (n > room) n = room;
+    memcpy(dst + pos, text, n);
+    pos += n;
+    dst[pos] = '\0';
+    return pos;
+}
+
+/* Ellipsize ONLY an over-long field value, so short values stay byte-identical
+ * and trailing labels (size=, blockdev=, backend=) survive a 255-char target.
+ * With no room for an ellipsis, fall back to whole-line truncation. */
+static void fit_field(char *dst, size_t dstlen, const char *prefix,
+                      const char *value, const char *suffix, size_t width) {
+    size_t np = strlen(prefix), nv = strlen(value), ns = strlen(suffix);
+    size_t full = np + nv + ns;
+    int ellipsize = (width > 0u && np + ns + 1u < width && full > width);
+    size_t pos = append_bounded(dst, dstlen, 0, prefix, np);
+    if (ellipsize) {
+        size_t keep = width - np - ns - 1u;
+        if (keep > nv) keep = nv;
+        pos = append_bounded(dst, dstlen, pos, value, keep);
+        pos = append_bounded(dst, dstlen, pos, "~", 1u);
+    } else {
+        pos = append_bounded(dst, dstlen, pos, value, nv);
+    }
+    pos = append_bounded(dst, dstlen, pos, suffix, ns);
+    if (!ellipsize && width > 0u && pos > width && width < dstlen) dst[width] = '\0';
+}
+
 /* ONE helper bounds every rendered field to the requested terminal width.
  * Content is ASCII (all escapes are emitted by this function), so visible
- * width equals byte count. The exact pinned 80x24 snapshot is unchanged
- * because none of its normal values reach the 80-column limit. */
+ * width equals byte count. fit_field has already ellipsized long values, so
+ * an 80x24 snapshot of normal values is unchanged by this final guard. */
 static void emit_line(sb_t *s, int row, const char *text, size_t width, int newline) {
     char line[1024];
     size_t n = strlen(text);
@@ -92,8 +126,10 @@ static char *render_full(const cbm_tui_state_t *st, size_t w, size_t h) {
 
     char sz[48];
     fixed_gib(st->size_bytes, sz, sizeof(sz));
-    snprintf(content, sizeof(content), "device=%s size=%s GiB blockdev=%s",
-             st->target, sz, st->is_blockdev ? "yes" : "no");
+    char tail[96];
+    snprintf(tail, sizeof(tail), " size=%s GiB blockdev=%s",
+             sz, st->is_blockdev ? "yes" : "no");
+    fit_field(content, sizeof(content), "device=", st->target, tail, w);
     emit_line(&s, 2, content, w, 0);
 
     snprintf(content, sizeof(content), "MBR=%s DJ=%s window=%llu GiB",
@@ -114,19 +150,51 @@ static char *render_full(const cbm_tui_state_t *st, size_t w, size_t h) {
     }
 
     int r = 4 + nparts;
-    snprintf(content, sizeof(content), "scan_hits=%llu last_offset=%llu",
-             st->scan_hits, st->last_hit_offset);
+    /* The CLI TUI does not run a scan or entropy sampler. Zeros mean "not
+     * measured", never "measured zero": say so instead of fabricating data. */
+    int sampled = (st->scan_hits != 0ULL || st->last_hit_offset != 0ULL ||
+                   st->entropy_min != 0.0 || st->entropy_mean != 0.0 ||
+                   st->entropy_max != 0.0);
+    if (sampled) {
+        snprintf(content, sizeof(content), "scan_hits=%llu last_offset=%llu",
+                 st->scan_hits, st->last_hit_offset);
+        emit_line(&s, r++, content, w, 0);
+
+        char mn[32], me[32], mx[32];
+        fixed_double(st->entropy_min, mn, sizeof(mn));
+        fixed_double(st->entropy_mean, me, sizeof(me));
+        fixed_double(st->entropy_max, mx, sizeof(mx));
+        snprintf(content, sizeof(content), "entropy min=%s mean=%s max=%s", mn, me, mx);
+        emit_line(&s, r++, content, w, 0);
+    } else {
+        snprintf(content, sizeof(content), "scan_hits=n/a (no scan in this frame)");
+        emit_line(&s, r++, content, w, 0);
+        snprintf(content, sizeof(content), "entropy=n/a (not sampled in this frame)");
+        emit_line(&s, r++, content, w, 0);
+    }
+
+    snprintf(tail, sizeof(tail), " term=%ux%u", (unsigned)w, (unsigned)h);
+    fit_field(content, sizeof(content), "backend=", st->backend, tail, w);
     emit_line(&s, r++, content, w, 0);
 
-    char mn[32], me[32], mx[32];
-    fixed_double(st->entropy_min, mn, sizeof(mn));
-    fixed_double(st->entropy_mean, me, sizeof(me));
-    fixed_double(st->entropy_max, mx, sizeof(mx));
-    snprintf(content, sizeof(content), "entropy min=%s mean=%s max=%s", mn, me, mx);
-    emit_line(&s, r++, content, w, 0);
-
-    snprintf(content, sizeof(content), "backend=%s term=%ux%u",
-             st->backend, (unsigned)w, (unsigned)h);
+    /* Two 16-byte rows of the caller's real first sector, one per line pair
+     * rendered as a single width-bounded row. Beyond the sampled bytes show
+     * "--" rather than reading past hex_len. */
+    size_t max_scroll = st->hex_len / 16u;
+    size_t scroll = st->hex_scroll > max_scroll ? max_scroll : st->hex_scroll;
+    char row0[33], row1[33];
+    for (size_t i = 0; i < 16u; i++) {
+        size_t o0 = scroll * 16u + i, o1 = o0 + 16u;
+        if (o0 < st->hex_len && o0 < sizeof(st->hex))
+            snprintf(row0 + 2u * i, 3, "%02x", st->hex[o0]);
+        else memcpy(row0 + 2u * i, "--", 3);
+        if (o1 < st->hex_len && o1 < sizeof(st->hex))
+            snprintf(row1 + 2u * i, 3, "%02x", st->hex[o1]);
+        else memcpy(row1 + 2u * i, "--", 3);
+    }
+    snprintf(content, sizeof(content), "HEX %04llx:%s %04llx:%s",
+             (unsigned long long)scroll * 16ULL, row0,
+             ((unsigned long long)scroll + 1ULL) * 16ULL, row1);
     emit_line(&s, r++, content, w, 0);
 
     snprintf(content, sizeof(content), "q/ESC quit (read-only, no key writes)");

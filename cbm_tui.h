@@ -33,6 +33,11 @@ typedef struct {
     double entropy_mean;
     double entropy_max;
     char backend[32];
+    /* Caller-filled first-sector bytes for the scrollable two-row hex view.
+     * hex_scroll is an index in 16-byte rows, clamped to [0, hex_len/16]. */
+    unsigned char hex[512];
+    size_t hex_len;
+    size_t hex_scroll;
     size_t term_width;
     size_t term_height;
 } cbm_tui_state_t;

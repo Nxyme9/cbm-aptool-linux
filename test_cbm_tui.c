@@ -47,6 +47,10 @@ static void fixed_state(cbm_tui_state_t *st) {
     st->entropy_mean = 4.0;
     st->entropy_max = 7.75;
     snprintf(st->backend, sizeof(st->backend), "native");
+    /* Deterministic first-sector fixture matching the pinned hex line below. */
+    for (size_t i = 0; i < 32u; i++) st->hex[i] = (unsigned char)i;
+    st->hex_len = sizeof(st->hex);
+    st->hex_scroll = 0;
     st->term_width = 80;
     st->term_height = 24;
 }
@@ -63,7 +67,8 @@ static const char EXPECTED[] =
     "\033[7;1Hscan_hits=3 last_offset=1048576\033[K"
     "\033[8;1Hentropy min=0.250000 mean=4.000000 max=7.750000\033[K"
     "\033[9;1Hbackend=native term=80x24\033[K"
-    "\033[10;1Hq/ESC quit (read-only, no key writes)\033[K"
+    "\033[10;1HHEX 0000:000102030405060708090a0b0c0d0e0f 0010:101112131415161718191a1b1c1d1e1f\033[K"
+    "\033[11;1Hq/ESC quit (read-only, no key writes)\033[K"
     "\n";
 
 static void test_snapshot_exact_bytes(void) {
@@ -164,7 +169,11 @@ static void test_long_target_truncated_to_width(void) {
         static const char CLEAR[] = "\033[H\033[2J";
         if (strncmp(out, CLEAR, sizeof(CLEAR) - 1u) == 0) {
             const char *body = out + sizeof(CLEAR) - 1u;
-            ok = (strstr(body, "device=XXXX") != NULL && lines_well_formed(body, 80));
+            ok = (strstr(body, "device=XXXX") != NULL &&
+                  strstr(body, "size=28.000000 GiB") != NULL &&
+                  strstr(body, "blockdev=no") != NULL &&
+                  strstr(body, "backend=native") != NULL &&
+                  lines_well_formed(body, 80));
         }
     }
     free(out);
@@ -186,6 +195,63 @@ static void test_non_finite_entropy_deterministic(void) {
     if (ok) PASS(); else FAIL("non-finite/-0.0 entropy must clamp deterministically");
 }
 
+static void test_hex_line_uses_real_sector_bytes(void) {
+    TEST("tui: hex line renders two real 16-byte rows from the first sector");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = (out != NULL && strstr(out,
+        "HEX 0000:000102030405060708090a0b0c0d0e0f "
+        "0010:101112131415161718191a1b1c1d1e1f") != NULL &&
+        lines_well_formed(out + 7, 80));
+    free(out);
+    if (ok) PASS(); else FAIL("hex dump must show the caller's real first-sector bytes");
+}
+
+static void test_hex_scroll_is_clamped(void) {
+    TEST("tui: hex scroll clamps to the end of the sampled sector");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    st.hex_scroll = 999u;
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = (out != NULL && strstr(out, "HEX 0200:--------------------------------") != NULL &&
+              lines_well_formed(out + 7, 80));
+    free(out);
+    if (ok) PASS(); else FAIL("hex scroll must clamp to hex_len/16");
+}
+
+static void test_no_scan_frame_says_not_sampled(void) {
+    TEST("tui: zeroed scan/entropy values are shown as not sampled, not fabricated");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    st.scan_hits = 0;
+    st.last_hit_offset = 0;
+    st.entropy_min = 0.0;
+    st.entropy_mean = 0.0;
+    st.entropy_max = 0.0;
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = (out != NULL &&
+              strstr(out, "scan_hits=n/a (no scan in this frame)") != NULL &&
+              strstr(out, "entropy=n/a (not sampled in this frame)") != NULL &&
+              strstr(out, "scan_hits=0 ") == NULL &&
+              lines_well_formed(out + 7, 80));
+    free(out);
+    if (ok) PASS(); else FAIL("TUI must not fabricate scan or entropy data");
+}
+
+static void test_entropy_clamped_to_bits_per_byte(void) {
+    TEST("tui: entropy above 8 bits/byte clamps to 8.000000");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    st.entropy_min = -1.0;
+    st.entropy_max = 9.0;
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = (out != NULL &&
+              strstr(out, "entropy min=0.000000 mean=4.000000 max=8.000000") != NULL);
+    free(out);
+    if (ok) PASS(); else FAIL("entropy must be clamped to [0,8] bits per byte");
+}
+
 int main(void) {
     printf("=== CBM TUI Tests ===\n");
     test_snapshot_exact_bytes();
@@ -195,6 +261,10 @@ int main(void) {
     test_zero_dimensions();
     test_long_target_truncated_to_width();
     test_non_finite_entropy_deterministic();
+    test_hex_line_uses_real_sector_bytes();
+    test_hex_scroll_is_clamped();
+    test_no_scan_frame_says_not_sampled();
+    test_entropy_clamped_to_bits_per_byte();
     printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

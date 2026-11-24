@@ -84,17 +84,18 @@ sequences and golden vectors.
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
 with 32-bit zlib-ng 1.3.1). Observed on this tree (2026-11-24) with the full
-chain `make clean && make && make test && sh test_backend_cli.sh`: **142 passing
-checks across 20 `Results:` lines / 159 `TEST:` lines, 0 failures**.
+chain `make clean && make && make test && sh test_backend_cli.sh`: **155 passing
+checks across 20 `Results:` lines / 172 `TEST:` lines, 0 failures**.
 
 Count history (honest, from the logs only): the earlier 126 figure was not
 reproducible from the test logs — the 5F log sums to 111. The 131 figure was
 the observed sum across 20 suites after Wave 5D (+3 layout, +12 doctor, +5 TUI).
-The current 142 is that 131 plus 5 new doctor checks, 2 new TUI checks and
-2 new shell CLI checks counted twice (inside `make test` and the explicit run).
+The current 155 is the controller-verified 142 plus 7 new doctor checks,
+4 new TUI checks and 1 new shell CLI check counted twice (inside `make test`
+and the explicit run).
 
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
-the doctor suite (now 17 checks) and the TUI suite (now 7 checks). The shell
+the doctor suite (now 24 checks) and the TUI suite (now 11 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside
 `make test` and explicitly. All fixtures are synthetic regular files; no device
 is required.
@@ -221,8 +222,9 @@ synthetic regular files only.
                      [--window-gib 26|27|28]
 
 `--window-gib` **defaults to 26**; the supported windows are 26, 27 and 28 GiB.
-A negative value (e.g. `-1`) is a usage error (exit 2), never a silent wrap to
-`ULLONG_MAX`.
+The first character must be an ASCII digit: `-1`, ` -1`, `abc`, an empty string
+and any value outside `26..28` (including a huge digit string that would wrap
+the byte arithmetic) are usage errors (exit 2) with no report and no write.
 
 The default is **READ-ONLY diagnosis**: any readable image is reported (DJ,
 parsable non-DJ, or invalid signature) and nothing is written. Repair occurs
@@ -234,20 +236,26 @@ three non-empty entries) but fail `cbm_layout_validate`. A parseable non-DJ
 (foreign) table is never silently rewritten; an already-valid DJ MBR is refused
 because there is nothing to repair.
 
-The backup path is refused first by the shared scan alias guard (same inode,
-`realpath` match, or path under the source), before either path is opened.
-Choose a `--backup` path in a directory you control and treat the backup as the
-recovery artefact: the alias guard runs before the backup is created, so a
-symlink swap in that directory is not re-checked (TOCTOU). The nominal candidate
-is built by `cbm_layout_construct` and must pass `cbm_layout_parse` +
-`cbm_layout_validate` with `disk_sectors = max(target_size/512,
-CBM_EXPECTED_WINDOW_SECTORS)`. Repair then follows one fixed verified sequence:
-read LBA 0 → write backup → re-read backup + `memcmp` → write the reconstructed
-LBA 0 via `cbm_file_write` → read back + `memcmp` → report every step. Only LBA 0
-of the target is ever written. A read-back failure names the backup path, and
-the CLI prints every step flag on any repair failure. A target smaller than
-`--window-gib` is refused (exit 1); missing flags or an aliased backup are exit
-2. Exit codes: 0 success, 1 runtime/refusal, 2 usage.
+The backup path is checked by the shared scan alias guard (same inode,
+`realpath` match, or path under the source) before either path is opened, then
+**re-checked immediately before the backup write**. The backup is claimed with
+`O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW` and written through that descriptor after
+an `fstat` inode comparison against the target opened `O_RDONLY`; a symlink or
+hardlink swap cannot redirect the verified backup. An existing backup path is
+a runtime refusal (exit 1) and leaves both files intact. Target sizing uses
+`st_size` for regular files and `BLKGETSIZE64` for block devices (`st_size` is
+zero there). The nominal candidate is built by `cbm_layout_construct` and must
+pass `cbm_layout_parse` + `cbm_layout_validate` with
+`disk_sectors = max(target_size/512, CBM_EXPECTED_WINDOW_SECTORS)`. Repair then
+follows one fixed verified sequence: read LBA 0 → claim and write backup →
+re-read backup + `memcmp` → write the reconstructed LBA 0 via `cbm_file_write`
+→ read back + `memcmp` → report every step. Only LBA 0 of the target is ever
+written. A completed-write read-back failure uses the prefix `FAILED (write
+completed, verification failed):` and names the backup path; refusals before
+the target write use `Refused:`. The CLI prints every step flag on any repair
+failure. A target smaller than `--window-gib` is refused (exit 1); missing
+flags or an aliased backup are exit 2. Exit codes: 0 success, 1 runtime/refusal,
+2 usage.
 
 Geometry is a **nominal convention from frozen spec Design Note 2, not a
 vendor measurement**: DJ_BOOT LBA 2048 / 1048576 LBAs / type `0x0c`, DJ_OS LBA
@@ -259,12 +267,19 @@ GiB; a 29 GiB request is rejected with an error containing `26..28`.
 
     ./cbm-tool tui <device|image>
 
-Renders one ANSI frame from `cbm_tui_render`, a **pure** function of a supplied
+Renders frames from `cbm_tui_render`, a **pure** function of a supplied
 state plus terminal dimensions: no tty probe inside the renderer, no file or
 device I/O and no key-driven writes. State is gathered through the read-only
-`doctor` report. The layout degrades from full 80x24 to compact 40x15 to tiny,
-then to a single complete line at zero dimensions. `q`/ESC consumes one
-keystroke; the target is never opened for writing.
+`doctor` report: the window is derived from measured size (28/27/26 GiB that
+fits), partition rows come from the device's actual first sector (unparsable ⇒
+zero rows, `mbr_status=INVALID`), and `backend=` reflects `cbm_backend_get()`.
+The full layout includes a two-row 16-byte-per-row hex view of that actual
+sector; `n`/`p` scroll it 16 bytes and `q`/ESC exits. In tty mode the terminal
+is set raw with `tcgetattr`/`cfmakeraw`/`tcsetattr` and always restored on exit;
+piped input is consumed without blocking. Scan hits and entropy are shown as
+`n/a` when this frame did not sample them — never fabricated zeros. The layout
+degrades from full 80x24 to compact 40x15 to tiny, then to a single complete
+line at zero dimensions. The target is never opened for writing.
 
 ## PE framework
 

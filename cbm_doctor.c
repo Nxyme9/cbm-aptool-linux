@@ -5,14 +5,19 @@
  * exactly one 512-byte sector (LBA 0) and one explicit backup file, and only
  * after every authorisation condition has been met (see cbm_doctor.h).
  */
+#define _GNU_SOURCE
 #define _FILE_OFFSET_BITS 64
 #define _LARGEFILE64_SOURCE
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/fs.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "cbm_doctor.h"
 #include "cbm_file.h"
@@ -32,10 +37,25 @@ static int usageerr(char *err, size_t errlen, const char *msg) {
     return 2;
 }
 
+/* Same sizing contract as image_last_lba() in main.c: st_size is zero on a
+ * Linux block device, so use BLKGETSIZE64 there. Regular files keep the exact
+ * st.st_size behaviour; other file types are refused. No device write here. */
 static int target_size(const char *path, unsigned long long *out) {
     struct stat st;
-    if (!path || stat(path, &st) != 0 || st.st_size < 0) return -1;
-    *out = (unsigned long long)st.st_size;
+    if (!path || stat(path, &st) != 0) return -1;
+    unsigned long long bytes;
+    if (S_ISBLK(st.st_mode)) {
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) return -1;
+        int ok = (ioctl(fd, BLKGETSIZE64, &bytes) == 0 && bytes > 0);
+        close(fd);
+        if (!ok) return -1;
+    } else if (S_ISREG(st.st_mode)) {
+        bytes = (unsigned long long)st.st_size;
+    } else {
+        return -1;
+    }
+    *out = bytes;
     return 0;
 }
 
@@ -56,9 +76,10 @@ static void fixed_gib(unsigned long long bytes, char *dst, size_t len) {
 static int parse_ull(const char *s, unsigned long long *out) {
     char *end = NULL;
     if (!s || !*s) return -1;
-    /* strtoull("-1") yields ULLONG_MAX with errno == 0; reject any sign so a
-     * negative --window-gib is a usage error (exit 2), never a silent 2^64-1. */
-    if (*s == '-' || *s == '+') return -1;
+    /* strtoull skips leading whitespace and turns "-1" into ULLONG_MAX with
+     * errno == 0. Require an ASCII digit as the very first character: signs,
+     * whitespace-only prefixes and empty strings are usage errors (exit 2). */
+    if (*s < '0' || *s > '9') return -1;
     errno = 0;
     unsigned long long v = strtoull(s, &end, 10);
     if (errno != 0 || end == s || *end != '\0') return -1;
@@ -126,6 +147,51 @@ static int repair_authorised(const unsigned char *mbr, size_t mbrlen,
     return 1; /* clause (b): broken DJ table may be reconstructed */
 }
 
+/* Atomically claim a NEW backup file by descriptor. O_EXCL rejects an
+ * existing path (including a hardlink or symlink) and O_NOFOLLOW rejects a
+ * symlink installed between the shared alias guard and this call. Comparing
+ * fstat() identities of the already-open descriptors removes the TOCTOU window
+ * without a second realpath implementation. The target is opened O_RDONLY. */
+static int claim_backup_fd(const char *backup, const char *path,
+                           char *err, size_t errlen) {
+    int tfd = open(path, O_RDONLY);
+    if (tfd < 0) {
+        seterr(err, errlen, "cannot open target read-only for backup claim; target untouched");
+        return -1;
+    }
+    struct stat ts, bs;
+    if (fstat(tfd, &ts) != 0) {
+        seterr(err, errlen, "cannot stat target descriptor; target untouched");
+        close(tfd);
+        return -1;
+    }
+    int bfd = open(backup, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0600);
+    if (bfd < 0) {
+        struct stat existing;
+        if (stat(backup, &existing) == 0 &&
+            existing.st_dev == ts.st_dev && existing.st_ino == ts.st_ino) {
+            seterr(err, errlen,
+                   "backup refused: existing backup resolves to the target inode; target untouched");
+            close(tfd);
+            return -2;
+        }
+        seterr(err, errlen,
+               "backup claim failed (path already exists or is a symlink); target untouched");
+        close(tfd);
+        return -1;
+    }
+    int bstat_ok = (fstat(bfd, &bs) == 0);
+    int same = (bstat_ok && bs.st_dev == ts.st_dev && bs.st_ino == ts.st_ino);
+    int regular = (bstat_ok && S_ISREG(bs.st_mode));
+    close(tfd);
+    if (!same && regular) return bfd;
+    seterr(err, errlen, same
+           ? "backup refused: backup resolves to the target inode (fd check); target untouched"
+           : "backup is not a regular file; target untouched");
+    close(bfd);
+    return same ? -2 : -1; /* -2 = alias -> usage error 2, -1 = runtime */
+}
+
 int cbm_doctor_report(const char *path, unsigned long long window_gib,
                       cbm_doctor_report_t *out, char *err, size_t errlen) {
     if (err && errlen) err[0] = '\0';
@@ -147,8 +213,11 @@ int cbm_doctor_report(const char *path, unsigned long long window_gib,
     out->mbr_ok = parsed;
     out->part_count = parsed ? L.part_count : 0;
     out->dj_ok = parsed && (cbm_layout_validate(&L, check_sectors(bytes)) == 0);
-    out->window_consistent = (window_gib >= 26ULL && window_gib <= 28ULL &&
-                              bytes >= window_gib * GIB_BYTES);
+    /* Range first: an in-range-looking but enormous digit string must never
+     * multiply by GIB_BYTES and wrap into a false "consistent" verdict. */
+    out->window_consistent = 0;
+    if (window_gib >= 26ULL && window_gib <= 28ULL)
+        out->window_consistent = (bytes >= window_gib * GIB_BYTES);
     /* ONE shared predicate drives both this verdict and the repair write
      * gate; no input can be reported repairable yet refused (or vice versa). */
     out->repairable = repair_authorised(mbr, sizeof(mbr), bytes, window_gib,
@@ -186,7 +255,9 @@ int cbm_doctor_repair(const char *path, const char *backup,
     if (!path || !backup || !out)
         return usageerr(err, errlen, "doctor repair: target, backup and result required");
 
-    /* ONE alias guard, before opening either path. No second guard later. */
+    /* First alias guard, before opening either path. The same shared guard is
+     * re-run immediately before the backup write to close the symlink/hardlink
+     * swap window; the fd claim below is the final no-follow/inode check. */
     char aerr[512] = {0};
     if (cbm_scan_report_check_output(backup, path, aerr, sizeof(aerr)) != 0) {
         if (err && errlen) snprintf(err, errlen, "backup refused: %s", aerr);
@@ -238,8 +309,28 @@ int cbm_doctor_repair(const char *path, const char *backup,
         return 1;
     }
 
-    /* Fixed verified sequence. Only LBA 0 of `path` is ever written. */
-    if (cbm_file_write(backup, 0, current, sizeof(current)) != 0)
+    /* Fixed verified sequence. Only LBA 0 of `path` is ever written; the
+     * backup is a new regular file written through its own claimed fd. */
+    aerr[0] = '\0';
+    if (cbm_scan_report_check_output(backup, path, aerr, sizeof(aerr)) != 0) {
+        if (err && errlen) snprintf(err, errlen, "backup refused: %s", aerr);
+        return 2;
+    }
+    int bfd = claim_backup_fd(backup, path, err, errlen);
+    if (bfd < 0) return (bfd == -2) ? 2 : 1; /* -2 = alias -> usage error 2 */
+    size_t wrote = 0;
+    while (wrote < sizeof(current)) {
+        ssize_t n = pwrite(bfd, current + wrote, sizeof(current) - wrote, (off_t)wrote);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (n == 0) break;
+        wrote += (size_t)n;
+    }
+    int backup_ok = (wrote == sizeof(current) && fsync(bfd) == 0);
+    if (close(bfd) != 0) backup_ok = 0;
+    if (!backup_ok)
         return seterr(err, errlen, "backup write failed; target untouched");
     out->step_backup_written = 1;
 
@@ -270,6 +361,10 @@ void cbm_doctor_readback_error(char *err, size_t errlen, const char *backup) {
     snprintf(err, errlen,
              "LBA 0 read-back verification failed; original sector is in backup %s",
              backup ? backup : "(unknown)");
+}
+
+const char *cbm_doctor_failure_prefix(int rc) {
+    return rc == -1 ? "FAILED (write completed, verification failed):" : "Refused:";
 }
 
 void cbm_doctor_print_steps(const cbm_doctor_repair_t *r, FILE *out, const char *backup) {
@@ -347,6 +442,13 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
         }
     }
 
+    /* Range-check BEFORE either mode runs: a huge in-range digit string would
+     * otherwise wrap window_gib * GIB_BYTES and look consistent. */
+    if (window_gib < 26ULL || window_gib > 28ULL) {
+        fprintf(e, "Error: --window-gib %llu out of supported range 26..28\n", window_gib);
+        return 2;
+    }
+
     /* All-or-nothing authorisation: any repair flag without the full trio is
      * a usage error, and nothing is written. */
     if (!do_repair) {
@@ -375,7 +477,7 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
         return 2;
     }
     if (rc != 0) {
-        fprintf(e, "Refused: %s\n", err);
+        fprintf(e, "%s %s\n", cbm_doctor_failure_prefix(rc), err);
         cbm_doctor_print_steps(&rep, e, backup);
         return 1;
     }
