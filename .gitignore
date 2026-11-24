@@ -31,6 +31,7 @@ Thumbs.db
 scratchpad
 test_cbm_file
 test_cbm_inspect
+test_cbm_decode
 test_tea_native
 test_pelib
 pe-call
