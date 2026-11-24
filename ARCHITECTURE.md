@@ -2,12 +2,14 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(40/40) and the real-device validation mode (`cbm-tool <blockdev>`).
+(48/48 across nine suites) and the real-device validation mode
+(`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
 Recovered from the vendor PE by the mmap-at-ImageBase harness (see
-[PE-HARNESS.md](PE-HARNESS.md)).
+[PE-HARNESS.md](PE-HARNESS.md)). `tea_crypto.c` is now the backend
+dispatcher; the native default is described in §9.
 
 | Symbol | PE address | Role |
 |---|---|---|
@@ -31,7 +33,7 @@ Recovered from the vendor PE by the mmap-at-ImageBase harness (see
 - `HLEN = ((filesize - 511) & ~7) + 511` (computed by `cbm_compute_hlen`).
 - Vendor error strings surfaced during RE: `File is encrypted!`,
   `Decrypt Faile!`.
-- Unit tests: `test_cbm` (4/4).
+- Unit tests: `test_cbm` (5/5).
 
 ## 3. Paced writes (`paced_write.{h,c}`)
 
@@ -84,7 +86,8 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   body) and `--inject <path>` (exact-size replacement body, re-encrypted with
   the header preserved).
 - PE path overridable via `CBM_PE_PATH` env var (default
-  `/tmp/opencode/ap.exe`).
+  `/tmp/opencode/ap.exe`). Only used by the opt-in PE backend; the native
+  default ignores it.
 
 ## 8. File-level container I/O (`cbm_file.{h,c}`, `cbm_inspect.{h,c}`)
 
@@ -116,6 +119,75 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   offset + token for each hit.
 - Unit tests: `test_cbm_inspect` (9/9).
 
+## 9. Clean-room cipher (`tea_native.{h,c}`) and backend selection
+
+The default backend is a pure-C implementation of the CBM block cipher. Its
+constants are recovered data dumped from the PE oracle — not vendor source —
+and its core is a clean-room translation of PE `0x459ec0`. It processes
+`floor(len / 8)` whole 8-byte blocks; trailing bytes of an odd-length buffer
+are left untouched. State is a 16-byte local reset at the start of every call.
+
+### 9.1 Recovered tables
+
+Seventeen constant tables span PE virtual addresses `0x52a9b0`–`0x52ad0f`:
+
+| Group | Tables (PE VA) |
+|---|---|
+| Bit/permutation | `BIT` `0x52ad08`, `T_INIT` `0x52a9b0`, `T_FINAL` `0x52a9f0`, `T_KEY` `0x52aa30`, `T_OUT` `0x52aab8`, `T_FEED` `0x52aae8` |
+| Shift/state | `T_LEFT` `0x52aa68`, `T_RIGHT` `0x52aa78`, `T_STATE` `0x52aa88` |
+| S-boxes | `SBOX0`–`SBOX7`, `0x52ab08`–`0x52acc8` |
+| Core | per-block transform `0x459ec0` |
+
+The rotation tables encode the two special key-schedule bits held in byte 3;
+`T_LEFT`/`T_RIGHT` select the rotation direction for each of the 16 rounds.
+
+### 9.2 Flag sequences
+
+Each 8-byte block runs three 16-round cores against one persistent per-call
+state. A flag of `0x50` is init (`0x10`) + final (`0x40`) permutation with
+right key rotations; `0x70` adds left rotations (`0x20`).
+
+| Direction | Core 1 | Core 2 | Core 3 |
+|---|---|---|---|
+| `tea_native_encrypt` | `0x50` | `0x70` | `0x50` |
+| `tea_native_decrypt` | `0x70` | `0x50` | `0x70` |
+
+Cores 1 and 3 use the low 8 key bytes; core 2 uses the high 8 (`key + 8`).
+
+### 9.3 Golden vectors
+
+Key `1a2b3c4d5e6fTENG`; ciphertext shown as hex. All three decrypt back to
+the exact input.
+
+| Vector | Plaintext | Ciphertext |
+|---|---|---|
+| A | `0000000000000000` (8 zero bytes) | `e66254b5da09fb31` |
+| B | bytes `00..1f` (32 bytes) | `3dd24f1e5c7d940ef690cfcc84ddff02660d74c782b22e1e4015059980c24f01` |
+| C | bytes `01..0f` (15 bytes, odd) | `1b787ed12c571f48090a0b0c0d0e0f` (only the first 8 bytes are encrypted) |
+
+`test_tea_native` (8/8) also covers state reset between calls, short-key
+rejection without buffer mutation, a 15-byte exact-allocation bounds check,
+and backend flag parsing. Its PE-oracle equivalence test compares native and
+PE ciphertext on deterministic inputs at nine lengths (8, 16, 24, 32, 64,
+15, 23, 31, 127) and skips when no PE is supplied.
+
+### 9.4 Backend-selection flow
+
+    main()
+      -> parse_backend_flags()            strip --native-crypto / --pe-crypto
+      -> cbm_backend_set()                store choice (native default)
+      -> container mode may return early  (flags already stripped from argv)
+      -> tea_init()  [tea_crypto.c]       native: g_ready = 1, no mmap
+                                          PE: mmap vendor image at 0x400000
+      -> tea_encrypt()/tea_decrypt()      dispatch to tea_native_* or PE fn ptr
+
+There is no silent fallback: if the requested backend cannot initialise,
+`tea_init` fails and `tea_encrypt`/`tea_decrypt` refuse to run. In PE mode
+`main()` runs `tea_native_selfcheck()` *before* `tea_init()` — the selfcheck
+maps and unmaps the PE at `0x400000` itself and would otherwise clobber the
+live backend mapping — and prints `PE self-check: PASS ...` on a byte-identical
+match. The PE remains the validation oracle, not a runtime dependency.
+
 ## Data flow (device validation)
 
     /dev/sdX
@@ -132,4 +204,6 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool` plus
-eight test binaries. All 39 tests pass.
+nine test binaries. All 48 tests pass across nine suites (`test_tea` 5,
+`test_tea_native` 8, `test_cbm` 5, `test_paced` 5, `test_usb_mass` 3,
+`test_layout` 5, `test_nand` 3, `test_cbm_file` 5, `test_cbm_inspect` 9).

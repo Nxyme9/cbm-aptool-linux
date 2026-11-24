@@ -13,9 +13,13 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 
 ## Working, verified
 
-- **TEA crypto core** — encrypt (`0x459da0`) / decrypt (`0x459d50`), block
-  fn `0x459ec0`, state `0x531328`, key `1a2b3c4d5e6fTENG`, CBC XOR region
-  `0x45a0ff`–`0x45a177`. Roundtrip verified up to 85687 bytes.
+- **Native TEA cipher (default)** — pure-C clean-room implementation in
+  `tea_native.{h,c}`, byte-identical to the vendor PE oracle on the golden
+  vectors and equivalence probes. No `ap.exe` is needed to build or use it.
+- **TEA crypto core (PE reference)** — encrypt (`0x459da0`) / decrypt
+  (`0x459d50`), block fn `0x459ec0`, state `0x531328`, key
+  `1a2b3c4d5e6fTENG`, CBC XOR region `0x45a0ff`–`0x45a177`. Roundtrip
+  verified up to 85687 bytes.
 - **CBM container** — 85688 bytes: byte-0 header + TEA-encrypted body;
   `HLEN = ((filesize-511)&~7)+511`. Error strings: `File is encrypted!`,
   `Decrypt Faile!`.
@@ -37,15 +41,48 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 ## Not recovered (see GAPS.md)
 
 1. Vendor SCSI CDB set.
-2. CBMUsbDisk.dll decryption (0/16 candidate keys yielded a valid PE).
+2. CBMUsbDisk.dll decryption (0/16 candidate keys yielded a valid PE) — no
+   longer blocks normal use; the TEA core is native and PE-free.
 3. BCH ECC / balanced erase (firmware-internal; host evidence only).
+
+## Crypto backends
+
+`cbm-tool` has two crypto backends behind one unchanged `tea_*` API:
+
+- **native (default)** — the clean-room pure-C cipher in `tea_native.{h,c}`.
+  No vendor binary, no `mmap`, no `ap.exe`. Every normal command, including
+  `container` mode, uses this backend.
+- **PE harness (opt-in)** — `--pe-crypto` runs the original vendor TEA cores
+  through the mmap-at-ImageBase loader in `tea_crypto.c` as a cross-check. It
+  needs a user-supplied `ap.exe`. There is **no silent fallback**: if the
+  requested backend cannot initialise, the command fails with an error.
+
+`--native-crypto` selects the default explicitly; `--pe-crypto` selects the
+cross-check (last flag wins). Flags are stripped before mode dispatch, so
+they work in self-test, device-validation and `container` modes, in any
+position:
+
+    ./cbm-tool --native-crypto
+    ./cbm-tool --pe-crypto
+    ./cbm-tool --pe-crypto container container.bin
+    ./cbm-tool container container.bin --pe-crypto --output container.reenc
+
+`CBM_PE_PATH` overrides the PE location (default `/tmp/opencode/ap.exe`); the
+native backend ignores it. In PE mode the tool runs `tea_native_selfcheck()`
+before init and prints `PE self-check: PASS (native byte-identical to PE)`
+when the clean-room cipher matches the vendor oracle. See
+[ARCHITECTURE.md](ARCHITECTURE.md) §9 for the recovered tables, flag
+sequences and golden vectors.
 
 ## Build
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 40/40 PASS
-across eight test suites (cbm 5, tea 5, paced 5, usb_mass 3, layout 5, nand 3, cbm_file 5, cbm_inspect 9).
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 48/48 PASS
+across nine test suites (tea 5, tea_native 8, cbm 5, paced 5, usb_mass 3,
+layout 5, nand 3, cbm_file 5, cbm_inspect 9). The `tea_native` PE-oracle
+equivalence test skips (not fails) when no PE is supplied; the other 47
+tests need no vendor binary.
 
 ## Device validation
 
@@ -81,13 +118,17 @@ encryption flag or the container size.
 
 ## PE harness
 
-The TEA core was recovered by running the vendor PE natively on Linux via an
-mmap-at-ImageBase harness (no Wine). See [PE-HARNESS.md](PE-HARNESS.md).
+The TEA core was originally recovered by running the vendor PE natively on
+Linux via an mmap-at-ImageBase harness (no Wine). That harness is now an
+opt-in `--pe-crypto` cross-check rather than a runtime dependency. See
+[PE-HARNESS.md](PE-HARNESS.md).
 
-## Supply your own ap.exe
+## Supply your own ap.exe (PE cross-check only)
 
-This repository contains **no vendor binary**. You must supply your own
-legally-obtained copy of APTool (`ap.exe`) and place it at
+This repository contains **no vendor binary**. The default build and all
+normal modes run the pure-C cipher and need no `ap.exe` at all. The optional
+`--pe-crypto` backend and the PE-oracle equivalence test do need one: supply
+your own legally-obtained copy of APTool (`ap.exe`) at
 `/tmp/opencode/ap.exe`, or set `CBM_PE_PATH=/path/to/ap.exe`. The harness
 loads it at runtime; it is never committed.
 
