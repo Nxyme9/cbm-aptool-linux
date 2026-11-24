@@ -43,7 +43,7 @@ crypto this repo ships.
   (11/11), `test_cbm_fuzz` (5/5), `test_cbm_scan` (10/10) and
   `test_cbm_scan_report` (4/4), `test_entropy_map` (8/8) and
   `test_png_write` (5/5), `test_cbm_doctor` (24/24) and `test_cbm_tui` (11/11)
-  — 155 checks across 20 `Results:` lines (172 `TEST:` lines) total.
+  — 162 checks across 20 `Results:` lines (179 `TEST:` lines) total.
 - **What would close it:** identify the correct key derivation (possibly
   tied to controller identity / serial) or unpack the DLL by other means.
 
@@ -111,8 +111,8 @@ crypto this repo ships.
 | BCH ECC / balanced erase | **Firmware-internal** |
 | Forensic scanner | Read-only candidate finder (aligned starts, unproven magic, < 85688-byte separation limit) |
 
-Current suite: 155 passing checks across 20 `Results:` lines / 172 `TEST:`
-lines (observed 2026-11-24; +3 layout constructor checks, +24 doctor, +11 TUI
+Current suite: 162 passing checks across 20 `Results:` lines / 179 `TEST:`
+lines (observed 2026-11-24; +3 layout constructor checks, +24 doctor, +18 TUI
 and +3 shell CLI checks counted twice over the earlier 111-observation baseline). The whole-image
 entropy heatmap is read-only by default, infers regions from the MBR (never
 verified), caps samples at 64 Mi and pixels at 1 Mi, and a full 500 GiB device

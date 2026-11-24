@@ -1,6 +1,6 @@
-# cbm-aptool-linux
+# nx-cbm-lab
 
-Linux-native reverse-engineering of the Chipsbank CBMUsbDisk vendor protocol.
+Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 162 passing checks, no vendor binary, honest gaps.
 
 ## What this is
 
@@ -84,18 +84,18 @@ sequences and golden vectors.
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
 with 32-bit zlib-ng 1.3.1). Observed on this tree (2026-11-24) with the full
-chain `make clean && make && make test && sh test_backend_cli.sh`: **155 passing
-checks across 20 `Results:` lines / 172 `TEST:` lines, 0 failures**.
+chain `make clean && make && make test && sh test_backend_cli.sh`: **162 passing
+checks across 20 `Results:` lines / 179 `TEST:` lines, 0 failures**.
 
 Count history (honest, from the logs only): the earlier 126 figure was not
 reproducible from the test logs — the 5F log sums to 111. The 131 figure was
 the observed sum across 20 suites after Wave 5D (+3 layout, +12 doctor, +5 TUI).
-The current 155 is the controller-verified 142 plus 7 new doctor checks,
-4 new TUI checks and 1 new shell CLI check counted twice (inside `make test`
+The current 162 is the controller-verified 142 plus 7 new doctor checks,
+11 new TUI checks and 1 new shell CLI check counted twice (inside `make test`
 and the explicit run).
 
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
-the doctor suite (now 24 checks) and the TUI suite (now 11 checks). The shell
+the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside
 `make test` and explicitly. All fixtures are synthetic regular files; no device
 is required.
