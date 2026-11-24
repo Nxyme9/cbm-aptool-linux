@@ -41,7 +41,8 @@ crypto this repo ships.
   `test_tea` (6/6), `test_tea_native` (8/8), `cbm_container` (5/5),
   `test_pelib` (19/19), `test_backend_cli.sh` (4/4), `test_cbm_decode`
   (11/11), `test_cbm_fuzz` (5/5), `test_cbm_scan` (10/10) and
-  `test_cbm_scan_report` (4/4) — 113 checks in sixteen suites total.
+  `test_cbm_scan_report` (4/4), `test_entropy_map` (8/8) and
+  `test_png_write` (5/5) — 126 checks in eighteen suites total.
 - **What would close it:** identify the correct key derivation (possibly
   tied to controller identity / serial) or unpack the DLL by other means.
 
@@ -109,6 +110,9 @@ crypto this repo ships.
 | BCH ECC / balanced erase | **Firmware-internal** |
 | Forensic scanner | Read-only candidate finder (aligned starts, unproven magic, < 85688-byte separation limit) |
 
-Current suite: 113 checks in sixteen suites (109 before Wave 5B task 2, plus
-4 scan-report checks). This repo is an honest, reproducible partial RE. It is not a complete
-protocol clone, and it is not a vendor binary redistribution.
+Current suite: 126 checks in eighteen suites (109 before Wave 5B task 2, plus
+4 scan-report checks, 8 entropy-map checks and 5 PNG checks). The whole-image
+entropy heatmap is read-only by default, infers regions from the MBR (never
+verified), caps samples at 64 Mi and pixels at 1 Mi, and a full 500 GiB device
+pass remains hardware-gated. This repo is an honest, reproducible partial RE.
+It is not a complete protocol clone, and it is not a vendor binary redistribution.

@@ -82,13 +82,14 @@ sequences and golden vectors.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 113/113 PASS
-across sixteen suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
-layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, decode 11,
-backend_cli 4, diff 11, fuzz 5, scan 10, scan_report 4). The four 5A
+Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
+with 32-bit zlib-ng 1.3.1). Expected: 126/126 PASS across eighteen suites
+(tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3, layout 5, nand 3,
+cbm_file 5, cbm_inspect 9, pelib 19, decode 11, backend_cli 4, diff 11,
+fuzz 5, scan 10, scan_report 4, entropy_map 8, png_write 5). The four 5A
 PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
 `test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; eleven
-`test_pelib` cases need the vendor PE and fail without it. The remaining 98
+`test_pelib` cases need the vendor PE and fail without it. The remaining 111
 checks need no vendor binary.
 
 ## Device validation
@@ -171,6 +172,40 @@ duplicate-hit suppression cannot report two genuinely distinct containers
 whose starts are less than `CBM_CONTAINER_SIZE` (85688) bytes apart.
 Real-device scanning remains a hardware-gated step, not part of the automated
 suite; the tests use synthetic images only.
+
+## Read-only entropy heatmap
+
+    ./cbm-tool heatmap <device|image> [--block MiB] [--width N]
+                    [--out <png>] [--json <report.json>]
+
+`heatmap` samples the full image in fixed blocks (default 1 MiB, minimum 1)
+via `cbm_file_read`, computes Shannon entropy with the shared decoder, and
+renders a row-major 8-bit RGB PNG (blue 0 -> cyan -> green -> yellow -> red 8
+bits/byte; empty pixels are grey). `--width` is 16..8192 (default 1024); image
+height is `clamp(ceil(samples / width), 1, max(1, 1048576 / width))` with
+`n == 0` giving height 1, pixel index `y*width + x` filled left-to-right then
+top-to-bottom. The pixel count is capped at **1 Mi pixels**
+(`CBM_HEATMAP_MAX_PIXELS`), bounding the pixel array to ~59 MB and the packed
+RGB buffer to ~3 MB; the sample count is capped at **64 Mi samples** and
+ranges over that cap are rejected.
+
+`heatmap` is **READ-ONLY**: the source is opened only through `cbm_file_read`
+plus a strictly `O_RDONLY` capacity probe for the full-device range. It writes
+**nothing** unless `--out <png>` or `--json <path>` is given, and those two
+paths are its only write targets. Both refuse paths that resolve to the source
+image (shared `st_dev`/`st_ino`/`realpath` guard from the scan CLI). The text
+summary is deterministic: fixed-point `%u.%06u` entropy with a literal `.`,
+never `%.6f`, and no locale or time dependence.
+
+Regions (MBR, DJ_BOOT, DJ_OS, DJ_DATA, TAIL) are **INFERRED from the MBR, not
+verified**; each region line carries `inferred=yes`. A non-DJ or unparseable
+MBR is reported as MBR+TAIL rather than forced into DJ names, and an unreadable
+MBR degrades to TAIL only. The PNG is a **minimal self-written encoder**
+(signature, IHDR, one IDAT with filter-0 scanlines compressed by zlib
+`compress2` at level 9, IEND, zlib `crc32` on every chunk); no external image
+library is used. A full 500 GiB device pass is a separate **hardware-gated**
+step and is NOT implied by a green test run; the automated suite uses
+synthetic regular files only.
 
 ## PE framework
 

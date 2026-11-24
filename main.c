@@ -15,6 +15,10 @@
  *                            [--carve <dir>] [--json <report>]
  *                            read-only forensic candidate scan; optional
  *                            carved containers and deterministic JSON report
+ *   cbm-tool heatmap <device|image> [--block MiB] [--width N]
+ *                            [--out <png>] [--json <path>]
+ *                            read-only block-entropy PNG + JSON sidecar;
+ *                            writes nothing without --out/--json
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +47,8 @@
 #include "cbm_fuzz.h"
 #include "cbm_scan.h"
 #include "cbm_scan_report.h"
+#include "entropy_map.h"
+#include "png_write.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -891,15 +897,245 @@ out:
     return rc;
 }
 
+/* ---- read-only whole-image entropy heatmap ------------------------------ */
+
+static void print_heatmap_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s heatmap <device|image> [--block MiB] [--width N]\n"
+        "                              [--out <png>] [--json <path>]\n"
+        "  --block MiB   block size in MiB (default 1, minimum 1)\n"
+        "  --width N     image width in pixels (default 1024, 16..8192)\n"
+        "  --out <png>   write an 8-bit RGB PNG (only write target)\n"
+        "  --json <path> write a deterministic JSON sidecar (only write target)\n"
+        "READ-ONLY: without --out/--json nothing is written. Output paths that\n"
+        "resolve to the source are refused. Regions are INFERRED from the MBR,\n"
+        "not verified. Image height = clamp(ceil(samples/width), 1,\n"
+        "max(1, 1048576/width)); pixels capped at 1048576 (1 Mi). Sample cap:\n"
+        "64 Mi samples. Exit: 0 ok, 1 runtime error, 2 usage error.\n",
+        prog);
+}
+
+/* Fixed-point entropy text: literal '.', never %.6f and never locale-based. */
+static void heatmap_fixed(char *dst, size_t dstlen, double v) {
+    if (!(v > 0.0)) v = 0.0;
+    if (v > 8.0) v = 8.0;
+    unsigned long long scaled = (unsigned long long)(v * 1000000.0 + 0.5);
+    snprintf(dst, dstlen, "%u.%06u", (unsigned)(scaled / 1000000ULL),
+             (unsigned)(scaled % 1000000ULL));
+}
+
+/* Full-image read-only heatmap. The source is opened only by cbm_file_read
+ * (and the strictly O_RDONLY capacity probe in image_last_lba). --out and
+ * --json are the only write targets, pre-flighted against the source inode
+ * with the shared scan-report guard before either file is opened. */
+static int heatmap_mode(int argc, char **argv) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    const char *png_path = NULL, *json_path = NULL;
+    unsigned long long block_mib = 1ULL;
+    unsigned long width_arg = 1024UL;
+    char err[256] = {0};
+
+    if (!path || !path[0]) {
+        fprintf(stderr, "Error: heatmap requires a device or image path\n");
+        print_heatmap_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--block") == 0) {
+            if (++i >= argc || parse_nonneg_ull(argv[i], &block_mib) != 0 ||
+                block_mib < 1ULL) {
+                fprintf(stderr, "Error: --block needs a positive integer (MiB)\n");
+                print_heatmap_usage(argv[0]);
+                return 2;
+            }
+        } else if (strcmp(a, "--width") == 0) {
+            unsigned long w = 0UL;
+            if (++i >= argc || parse_unsigned_arg(argv[i], &w) != 0 ||
+                w < 16UL || w > 8192UL) {
+                fprintf(stderr, "Error: --width needs an integer in 16..8192\n");
+                print_heatmap_usage(argv[0]);
+                return 2;
+            }
+            width_arg = w;
+        } else if (strcmp(a, "--out") == 0 || strcmp(a, "--json") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: %s needs a local path\n", a);
+                print_heatmap_usage(argv[0]);
+                return 2;
+            }
+            if (a[2] == 'o') png_path = argv[i];
+            else json_path = argv[i];
+        } else {
+            fprintf(stderr, "Error: unknown heatmap option '%s'\n", a);
+            print_heatmap_usage(argv[0]);
+            return 2;
+        }
+    }
+    if (block_mib > (unsigned long long)(SIZE_MAX / 1048576ULL)) {
+        fprintf(stderr, "Error: --block too large for this build\n");
+        return 2;
+    }
+    const size_t block_bytes = (size_t)(block_mib * 1048576ULL);
+
+    unsigned long long last_lba = 0ULL;
+    if (image_last_lba(path, &last_lba) != 0) {
+        fprintf(stderr, "Error: cannot determine image size for '%s'\n", path);
+        return 1;
+    }
+    const unsigned long long sectors = last_lba + 1ULL;
+    if (sectors > ULLONG_MAX / (unsigned long long)CBM_SECTOR_SIZE) {
+        fprintf(stderr, "Error: image byte range overflows\n");
+        return 2;
+    }
+    const unsigned long long end_byte =
+        sectors * (unsigned long long)CBM_SECTOR_SIZE;
+
+    /* Reuse the scan CLI guard: no inode/realpath logic is duplicated here. */
+    if (png_path &&
+        cbm_scan_report_check_output(png_path, path, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 2;
+    }
+    if (json_path &&
+        cbm_scan_report_check_output(json_path, path, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err);
+        return 2;
+    }
+
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    const unsigned char *mbr_ptr = NULL;
+    size_t mbr_len = 0;
+    int mbr_ok = (cbm_file_read(path, 0LL, mbr, (size_t)CBM_SECTOR_SIZE) == 0);
+    if (mbr_ok) {
+        mbr_ptr = mbr;
+        mbr_len = (size_t)CBM_SECTOR_SIZE;
+    }
+
+    cbm_entropy_sample_t *samples = NULL;
+    size_t nsamples = 0;
+    if (cbm_entropy_map(path, 0ULL, end_byte, block_bytes, &samples, &nsamples,
+                        err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err[0] ? err : "entropy map failed");
+        return 1;
+    }
+
+    /* Row-major grid: sample i -> pixel (i/width, i%width). Height is capped
+     * so width*height never exceeds CBM_HEATMAP_MAX_PIXELS (1 Mi pixels). */
+    const size_t width = (size_t)width_arg;
+    const size_t max_height = (size_t)CBM_HEATMAP_MAX_PIXELS / width;
+    const size_t height_cap = max_height ? max_height : 1u;
+    size_t height = 1u;
+    if (nsamples > 0u) {
+        size_t rows = (nsamples + width - 1u) / width;
+        if (rows < 1u) rows = 1u;
+        height = rows > height_cap ? height_cap : rows;
+    }
+    const size_t npixels = width * height;
+    if (npixels == 0u || npixels > (size_t)CBM_HEATMAP_MAX_PIXELS) {
+        fprintf(stderr, "Error: heatmap pixel count is out of range\n");
+        free(samples);
+        return 1;
+    }
+    const size_t rgb_len = npixels * 3u;
+    cbm_heatmap_pixel_t *pixels = (cbm_heatmap_pixel_t *)calloc(
+        npixels, sizeof(*pixels));
+    unsigned char *rgb = (unsigned char *)malloc(rgb_len);
+    if (!pixels || !rgb) {
+        fprintf(stderr, "Error: out of memory for the heatmap image\n");
+        free(rgb);
+        free(pixels);
+        free(samples);
+        return 1;
+    }
+    if (cbm_entropy_downsample(samples, nsamples, width, height,
+                               pixels, npixels) != npixels) {
+        fprintf(stderr, "Error: downsample did not fill the pixel grid\n");
+        free(rgb);
+        free(pixels);
+        free(samples);
+        return 1;
+    }
+    for (size_t i = 0; i < npixels; i++) {
+        rgb[i * 3u] = pixels[i].r;
+        rgb[i * 3u + 1u] = pixels[i].g;
+        rgb[i * 3u + 2u] = pixels[i].b;
+    }
+
+    cbm_entropy_region_t regions[8];
+    const size_t nregions = cbm_entropy_regions(samples, nsamples, mbr_ptr,
+                                                mbr_len, regions, 8u);
+
+    double emin = 0.0, emax = 0.0, esum = 0.0;
+    if (nsamples > 0u) {
+        emin = samples[0].entropy;
+        emax = samples[0].entropy;
+        for (size_t i = 0; i < nsamples; i++) {
+            if (samples[i].entropy < emin) emin = samples[i].entropy;
+            if (samples[i].entropy > emax) emax = samples[i].entropy;
+            esum += samples[i].entropy;
+        }
+    }
+    char fmin[32], fmean[32], fmax[32];
+    heatmap_fixed(fmin, sizeof(fmin), emin);
+    heatmap_fixed(fmean, sizeof(fmean), nsamples ? esum / (double)nsamples : 0.0);
+    heatmap_fixed(fmax, sizeof(fmax), emax);
+
+    printf("=== Heatmap Mode: %s ===\n", path);
+    printf("Range: bytes 0-%llu\n", end_byte ? end_byte - 1ULL : 0ULL);
+    printf("Block: %llu MiB (%zu bytes)\n", block_mib, block_bytes);
+    printf("Samples: %zu (cap %llu)\n", nsamples, CBM_ENTROPY_MAX_SAMPLES);
+    printf("Image: %zu x %zu (max %u pixels)\n", width, height,
+           (unsigned)CBM_HEATMAP_MAX_PIXELS);
+    printf("Entropy: min %s mean %s max %s\n", fmin, fmean, fmax);
+    if (!mbr_ok) puts("MBR: unreadable; regions are TAIL only (INFERRED)");
+    printf("Regions: %zu (INFERRED from MBR, not verified)\n", nregions);
+    for (size_t i = 0; i < nregions; i++) {
+        char rmin[32], rmean[32], rmax[32];
+        heatmap_fixed(rmin, sizeof(rmin), regions[i].min);
+        heatmap_fixed(rmean, sizeof(rmean), regions[i].mean);
+        heatmap_fixed(rmax, sizeof(rmax), regions[i].max);
+        printf("  REGION %s inferred=%s offset=%llu length=%llu samples=%zu "
+               "min=%s mean=%s max=%s\n",
+               regions[i].name, regions[i].inferred ? "yes" : "no",
+               regions[i].offset, regions[i].length, regions[i].samples,
+               rmin, rmean, rmax);
+    }
+
+    int rc = 1;
+    if (png_path) {
+        if (png_write_rgb(png_path, rgb, width, height, err, sizeof(err)) != 0) {
+            fprintf(stderr, "Error: %s\n", err[0] ? err : "PNG write failed");
+            goto out;
+        }
+        printf("PNG: %s\n", png_path);
+    }
+    if (json_path) {
+        if (cbm_entropy_json(json_path, samples, nsamples, regions, nregions,
+                             width, height, err, sizeof(err)) != 0) {
+            fprintf(stderr, "Error: %s\n", err[0] ? err : "JSON write failed");
+            goto out;
+        }
+        printf("JSON: %s\n", json_path);
+    }
+    if (!png_path && !json_path) puts("No output written (read-only default).");
+    rc = 0;
+out:
+    free(rgb);
+    free(pixels);
+    free(samples);
+    return rc;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
     /* Container/fuzz/scan modes load the crypto backend themselves and must
-     * not run the selftest first (that would init/cleanup TEA twice). diff is
-     * pure byte analysis and needs no crypto at all. All four subcommands are
-     * dispatched before the device path so nothing can be mistaken for a
-     * block-device argument. */
+     * not run the selftest first (that would init/cleanup TEA twice). diff and
+     * heatmap are pure byte analysis and need no crypto at all. All five
+     * subcommands are dispatched before the device path so nothing can be
+     * mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
         return container_mode(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "diff") == 0)
@@ -908,6 +1144,8 @@ int main(int argc, char **argv) {
         return fuzz_mode(argc, argv);
     if (argc >= 2 && strcmp(argv[1], "scan") == 0)
         return scan_mode(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "heatmap") == 0)
+        return heatmap_mode(argc, argv);
 
     if (selftest() != 0) return 1;
     if (argc > 1) return verify_device(argv[1]);

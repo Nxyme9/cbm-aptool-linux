@@ -2,7 +2,7 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(113/113 across sixteen suites, including CLI backend selection) and the
+(126/126 across eighteen suites, including CLI backend selection) and the
 real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
@@ -252,6 +252,31 @@ match. The PE remains the validation oracle, not a runtime dependency.
   starting less than 85688 bytes apart cannot both be reported. Real-device
   scanning is hardware-gated, not part of the suite.
 
+## 9d. Whole-disk entropy heatmap (Wave 5F)
+
+- `entropy_map.{h,c}` (8/8): chunked `cbm_file_read` sampling over
+  `[start,end)` at 1 MiB blocks, entropy from `cbm_decode_entropy`, a
+  deterministic row-major downsample (max/mean/min aggregation, entropy ramp
+  blue -> cyan -> green -> yellow -> red), MBR-based region overlay
+  (`MBR`, `DJ_BOOT`, `DJ_OS`, `DJ_DATA`, `TAIL`) and a fixed-point JSON sidecar.
+  The sample count is capped at 64 Mi and ranges over the cap are rejected.
+- `png_write.{h,c}` (5/5): self-written 8-bit RGB PNG encoder (signature,
+  IHDR, one IDAT with zlib `compress2` level 9 over filter-0 scanlines, IEND,
+  zlib `crc32` per chunk) plus a zlib-only decoder used by the tests to prove
+  signature, chunk order, CRCs, IHDR fields and byte-exact round trip. No
+  external image library.
+- `heatmap_mode()` in `main.c` drives both and prints a deterministic text
+  summary. It is **READ-ONLY**: the source is opened only via `cbm_file_read`
+  plus the strictly `O_RDONLY` `image_last_lba()` capacity probe; `--out` and
+  `--json` are the only write targets and reuse
+  `cbm_scan_report_check_output` to refuse paths that alias the source.
+  Without either flag nothing is written. Image height is
+  `clamp(ceil(samples/width), 1, max(1, CBM_HEATMAP_MAX_PIXELS/width))` with
+  `CBM_HEATMAP_MAX_PIXELS = 1048576`, and `n == 0` gives height 1. Regions are
+  **INFERRED from the MBR, not verified**; a non-DJ or unparseable MBR is
+  reported as MBR+TAIL instead of forced DJ names. A full 500 GiB device pass
+  is a separate hardware-gated step, not implied by a green suite.
+
 ## 10. PE loader library (`pelib.{h,c}`)
 
 One reusable fixed-base PE loader now serves the PE backend, the generic
@@ -295,10 +320,11 @@ section-copy loop.
 
     make clean && make && make test
 
-`CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool`, the
-`pe-call` CLI, fifteen test binaries and one shell CLI suite. All 113 checks
-pass across sixteen suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
-`test_paced` 5, `test_usb_mass` 3, `test_layout` 5, `test_nand` 3,
-`test_cbm_file` 5, `test_cbm_inspect` 9, `test_pelib` 19, `test_cbm_decode` 11,
+`CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`; the `cbm-tool` target also
+links `-lz`. Produces `cbm-tool`, the `pe-call` CLI, seventeen test binaries
+and one shell CLI suite. All 126 checks pass across eighteen suites
+(`test_tea` 6, `test_tea_native` 8, `test_cbm` 5, `test_paced` 5,
+`test_usb_mass` 3, `test_layout` 5, `test_nand` 3, `test_cbm_file` 5,
+`test_cbm_inspect` 9, `test_pelib` 19, `test_cbm_decode` 11,
 `test_backend_cli.sh` 4, `test_cbm_diff` 11, `test_cbm_fuzz` 5, `test_cbm_scan`
-10, `test_cbm_scan_report` 4).
+10, `test_cbm_scan_report` 4, `test_entropy_map` 8, `test_png_write` 5).
