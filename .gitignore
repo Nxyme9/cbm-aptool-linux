@@ -49,3 +49,7 @@ fuzz_container
 fuzz_decode
 fuzz_layout
 fuzz_scan
+
+# Python bytecode from py_compile (generated; never committed)
+__pycache__/
+*.pyc

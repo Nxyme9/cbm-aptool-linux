@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CBM playground — local WASM container inspector</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1100px; padding: 1rem; }
+  h1, h2 { line-height: 1.2; }
+  h2 { margin-top: 1.5rem; font-size: 1.15rem; }
+  fieldset { border: 1px solid #777; border-radius: 6px; margin: 1rem 0; padding: 0.75rem; }
+  legend { font-weight: 600; }
+  .privacy { border-left: 4px solid #2a7; padding: 0.5rem 0.75rem; background: #2a7a; }
+  .drop { border: 2px dashed #777; border-radius: 6px; padding: 1rem; margin: 0.5rem 0; }
+  .drop:focus, .drop.dragover { outline: 3px solid #39f; outline-offset: 2px; }
+  label, button, input, select { font: inherit; }
+  button { padding: 0.35rem 0.7rem; margin: 0.2rem 0.3rem 0.2rem 0; cursor: pointer; }
+  button:focus-visible, input:focus-visible, .drop:focus-visible { outline: 3px solid #39f; outline-offset: 2px; }
+  input[type="text"], input[type="number"] { padding: 0.25rem 0.4rem; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+  #status { min-height: 1.5em; }
+  #error { min-height: 1.5em; color: #c00; font-weight: 600; }
+  table { border-collapse: collapse; font-family: ui-monospace, monospace; font-size: 13px; }
+  th, td { padding: 0 0.5rem; border: 1px solid #888; text-align: left; }
+  td.hex input { width: 2.2em; border: 1px solid transparent; background: transparent; font: inherit; }
+  td.hex input:hover, td.hex input:focus { border-color: #39f; }
+  td.ascii { white-space: pre; }
+  .scroll { overflow: auto; max-height: 28rem; }
+  dl.stats { display: grid; grid-template-columns: max-content 1fr; gap: 0.2rem 1rem; }
+  dl.stats dt { font-weight: 600; }
+  dd { margin: 0; }
+  #entropyTrack { display: block; width: min(100%, 30rem); height: 1rem; border: 1px solid #777; border-radius: 4px; }
+  #entropyFill { height: 100%; width: 0; background: #39a; }
+  ul#strings, ol#diffList { font-family: ui-monospace, monospace; padding-left: 1.5rem; }
+  .hint { font-size: 0.9em; opacity: 0.85; }
+</style>
+</head>
+<body>
+<h1>CBM playground</h1>
+<p class="privacy"><strong>Privacy:</strong> all processing is client-side. Files, keys and edits stay in
+this browser tab; there is no server, no upload, no install and no network request for file data.
+Processing stops when you close the tab.</p>
+
+<p id="status" role="status" aria-live="polite">Loading wasm module…</p>
+<p id="error" role="alert"></p>
+
+<fieldset>
+  <legend>WASM module</legend>
+  <p id="wasmHint" class="hint">The page loads <code>playground.wasm</code> beside this file. If you opened
+  the page with <code>file://</code>, browsers block that read: choose the same
+  <code>playground.wasm</code> file here instead.</p>
+  <label for="wasmFile">Select playground.wasm (fallback for local files):</label>
+  <input id="wasmFile" type="file" accept=".wasm,application/wasm">
+</fieldset>
+
+<fieldset>
+  <legend>Input container (first file)</legend>
+  <div id="dropA" class="drop" role="button" tabindex="0"
+       aria-label="Drop the first container file here, or press Enter to choose a file">
+    Drop the first file here, or press Enter / Space to choose it.
+  </div>
+  <label for="fileA">Choose first file:</label>
+  <input id="fileA" type="file">
+  <p class="hint">Maximum 256 KiB (262144 bytes). Larger files are rejected before any processing.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Cipher and inspection</legend>
+  <div class="controls">
+    <label for="key">16-character key:</label>
+    <input id="key" type="text" size="16" maxlength="16" value="1a2b3c4d5e6fTENG"
+           aria-describedby="keyHelp">
+    <button id="decryptBtn" type="button">Decrypt displayed bytes</button>
+    <button id="encryptBtn" type="button">Encrypt displayed bytes</button>
+    <button id="rescanBtn" type="button">Re-scan displayed bytes</button>
+  </div>
+  <p id="keyHelp" class="hint">The clean-room TEA key is exactly 16 ASCII characters. Decrypt/encrypt
+  operate only on the first file, in place, with bytes that are a multiple of 8; trailing bytes are
+  left unchanged.</p>
+</fieldset>
+
+<fieldset>
+  <legend>Stats and entropy</legend>
+  <dl class="stats">
+    <dt>Size</dt><dd id="statSize">no file</dd>
+    <dt>State</dt><dd id="statState">—</dd>
+    <dt>Printable density</dt><dd id="statPrintable">—</dd>
+    <dt>Strings found</dt><dd id="statStrings">—</dd>
+    <dt>Changed bytes vs second file</dt><dd id="statDiff">—</dd>
+  </dl>
+  <label for="entropyText">Shannon entropy (bits per byte, 0–8)</label>
+  <div id="entropyTrack" role="img" aria-labelledby="entropyText">
+    <div id="entropyFill"></div>
+  </div>
+  <output id="entropyText" for="fileA">Entropy: no file</output>
+</fieldset>
+
+<h2>Container hex viewer (editable)</h2>
+<p class="hint">Click a byte, type two hex digits and press Enter or leave the field. The ASCII
+sidebar reflects the edited bytes. 32 rows per page; every cell has an offset label for keyboard and
+screen-reader use.</p>
+<div class="controls">
+  <button id="prevPage" type="button">Previous page</button>
+  <button id="nextPage" type="button">Next page</button>
+  <label for="rowJump">First row (hex offset):</label>
+  <input id="rowJump" type="text" size="10" placeholder="00000000" inputmode="text">
+  <button id="jumpBtn" type="button">Go to row</button>
+  <span id="pageLabel">no file</span>
+</div>
+<div class="scroll">
+  <table id="hexTable">
+    <caption class="hint">Editable hex dump of the displayed bytes</caption>
+    <thead><tr><th scope="col">Offset</th><th scope="col">Hex bytes</th><th scope="col">ASCII</th></tr></thead>
+    <tbody id="hexBody"></tbody>
+  </table>
+</div>
+
+<h2>Printable strings</h2>
+<p class="hint">Runs of 0x20–0x7e of length ≥ 4, truncated to 63 characters, at most 256 runs.</p>
+<ul id="strings"><li>No file loaded.</li></ul>
+
+<h2>Diff against a second file</h2>
+<fieldset>
+  <legend>Second file (compared as raw bytes)</legend>
+  <div id="dropB" class="drop" role="button" tabindex="0"
+       aria-label="Drop the second file here, or press Enter to choose a file">
+    Drop the second file here, or press Enter / Space to choose it.
+  </div>
+  <label for="fileB">Choose second file:</label>
+  <input id="fileB" type="file">
+  <button id="diffBtn" type="button">Compare files</button>
+  <p class="hint">The comparison uses the currently displayed bytes of the first file (not a fresh
+  copy of the original) against the raw bytes of the second file. Ranges merge when they touch
+  (diff context 0).</p>
+</fieldset>
+<ol id="diffList"><li>No comparison yet.</li></ol>
+
+<h2>Export</h2>
+<div class="controls">
+  <label for="reencrypt"><input id="reencrypt" type="checkbox"> Re-encrypt with the key before download</label>
+  <button id="downloadBtn" type="button">Download modified container</button>
+</div>
+<p class="hint">Without re-encryption the export is exactly the byte array shown in the hex viewer.
+The output filename is derived from the first file's name.</p>
+
+<script src="app.js"></script>
+</body>
+</html>

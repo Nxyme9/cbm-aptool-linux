@@ -114,6 +114,8 @@ CLI suite appears twice in that log because the chain runs it both inside
 `make test` and explicitly. All fixtures are synthetic regular files; no device
 is required.
 
+Wave 5H adds a local-only browser playground in [`wasm/`](wasm/) (static C API compiled to wasm32, hand-written HTML/JS, no server or install). Its build command, the 256 KiB static-memory cap, the `emcc`-absent / `clang` + `wasm-ld` route, and the exact Node test result are documented in [docs/wasm-playground.md](docs/wasm-playground.md); its suite is separate from the C suites above and does not change their measured pass counts.
+
 ## Device validation
 
     ./cbm-tool /dev/sdX
