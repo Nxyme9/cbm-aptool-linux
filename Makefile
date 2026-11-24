@@ -25,6 +25,8 @@ FUZZ_BINS = fuzz_tea fuzz_container fuzz_decode fuzz_layout fuzz_scan
 TARGET = cbm-tool
 CLI = pe-call
 TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui test_json_cli.sh
+# Python MCP test is a source file: keep it out of TESTS so `clean` cannot rm it.
+MCP_TESTS = test_mcp_server.py
 
 # PE path is supplied at runtime through CBM_PE_PATH; no build-time default.
 
@@ -96,7 +98,10 @@ pe-call: pe-call.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ pe-call.c pelib.c $(LDFLAGS)
 
 test: $(TESTS) $(TARGET)
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS)
+
+test-mcp: $(TARGET)
+	python3 $(MCP_TESTS)
 
 # CLI-level backend selection: no device access; fixtures go under /tmp/opencode.
 test-cli: $(TARGET)
@@ -178,4 +183,4 @@ ci:
 clean:
 	rm -f $(TARGET) $(CLI) $(filter-out %.sh,$(TESTS)) $(FUZZ_BINS) *.o
 
-.PHONY: all test test-cli asan fuzz $(FUZZ_BINS) ci clean
+.PHONY: all test test-mcp test-cli asan fuzz $(FUZZ_BINS) ci clean

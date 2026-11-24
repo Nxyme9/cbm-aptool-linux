@@ -39,6 +39,12 @@ exact closure gates.
   85687-byte body) and `--inject <path>` (replace the body with an exact-size
   modified plaintext before re-encryption).
 
+Agent tooling is read-only: [docs/mcp-server.md](docs/mcp-server.md) documents
+`mcp_cbm_server.py`, a stdio MCP server with six thin wrappers over the locally
+built `./cbm-tool --json` modes (container info/dump, diff, device layout,
+scan and entropy profile), plus the [CBM skill](skills/cbm/SKILL.md). It exposes
+no device-write or MBR-repair tool; those remain separate human-gated CLI steps.
+
 ## Not recovered (see GAPS.md)
 
 1. Vendor SCSI CDB set.
