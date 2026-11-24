@@ -23,14 +23,11 @@ size_t cbm_compute_hlen(size_t filesize) {
 
 int cbm_cbc_decrypt(unsigned char *body, size_t body_len, const char *key) {
     if (!body || body_len == 0 || !key) return -1;
-    /* Body must be multiple of 8 bytes for TEA */
-    if (body_len % 8 != 0) return -1;
-    /* Use TEA decrypt core */
+    /* TEA core handles arbitrary lengths (incl. 85687-byte container body) */
     return tea_decrypt(body, body_len, key);
 }
 
 int cbm_cbc_encrypt(unsigned char *body, size_t body_len, const char *key) {
     if (!body || body_len == 0 || !key) return -1;
-    if (body_len % 8 != 0) return -1;
     return tea_encrypt(body, body_len, key);
 }
