@@ -87,7 +87,8 @@ int png_write_rgb(const char *path, const unsigned char *rgb,
         return -1;
     }
     size_t stride = width * 3u;
-    if (height > SIZE_MAX / (stride + 1u)) {
+    /* width == SIZE_MAX/3u would leave stride == SIZE_MAX; +1u wraps to 0. */
+    if (stride == SIZE_MAX || height > SIZE_MAX / (stride + 1u)) {
         seterr(err, errlen, "PNG raw scanline buffer overflows size_t");
         return -1;
     }
@@ -302,7 +303,8 @@ int png_read_rgb(const char *path, unsigned char **rgb_out,
         goto done;
     }
     size_t stride = w * 3u;
-    if (h > SIZE_MAX / (stride + 1u)) {
+    /* w == SIZE_MAX/3u would leave stride == SIZE_MAX; +1u wraps to 0. */
+    if (stride == SIZE_MAX || h > SIZE_MAX / (stride + 1u)) {
         seterr(err, errlen, "PNG scanline buffer overflows size_t");
         goto done;
     }

@@ -367,10 +367,19 @@ static void test_downsample_total_and_deterministic(void) {
         ok = (cbm_entropy_downsample(s, 3, width, height, a, total) == total);
         if (ok) {
             size_t sum = 0;
+            /* Empty-pixel contract: interior empties inherit the next occupied
+             * pixel's first sample; trailing empties carry n (== 3 here). */
+            size_t exp_first_sparse[15];
+            size_t next_first = 3u;
+            for (size_t p = total; p-- > 0;) {
+                if (p % width == 0u && p / width < 3u) next_first = p / width;
+                exp_first_sparse[p] = next_first;
+            }
             for (size_t p = 0; p < total; p++) {
                 sum += a[p].sample_count;
                 if (a[p].sample_count == 0 &&
-                    (a[p].r != 128 || a[p].g != 128 || a[p].b != 128 ||
+                    (a[p].first_sample != exp_first_sparse[p] ||
+                     a[p].r != 128 || a[p].g != 128 || a[p].b != 128 ||
                      a[p].min != 0.0 || a[p].mean != 0.0 || a[p].max != 0.0)) ok = 0;
             }
             if (ok) ok = (sum == 3u);

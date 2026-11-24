@@ -46,7 +46,8 @@ typedef struct {
     const char *name;          /* "MBR", "DJ_BOOT", "DJ_OS", "DJ_DATA", "TAIL" */
     unsigned long long offset;
     unsigned long long length;
-    size_t samples;            /* samples fully inside the region */
+    size_t samples;            /* samples whose START offset lies in
+                                * [offset, offset+length) */
     double min, mean, max;     /* 0.0 when samples == 0 */
     int inferred;              /* always 1: derived from the MBR, not verified */
 } cbm_entropy_region_t;
@@ -85,9 +86,20 @@ size_t cbm_entropy_downsample(const cbm_entropy_sample_t *samples, size_t n,
  * to the last sampled byte. An unparseable or non-DJ MBR yields MBR + TAIL
  * only; with no MBR buffer at all, TAIL only. DJ names are never invented.
  * Every region has
- * inferred = 1. Statistics use samples fully inside each region; a region with
- * no samples reports 0.0 for min/mean/max. Returns regions written (<= max),
- * or 0 when n == 0 or out == NULL. */
+ * inferred = 1. Statistics count samples whose START offset lies in
+ * [offset, offset+length). With large blocks (e.g. the default 1 MiB) a small
+ * region such as the 512-byte MBR is attributed the entropy of the whole block
+ * that starts inside it: a per-block approximation, not a byte-precise
+ * measurement. A region with no samples reports 0.0 for min/mean/max.
+ *
+ * Honesty contract: this API has no disk-size argument, so cbm_layout_validate
+ * is called with disk_sectors = max(sampled_sectors,
+ * CBM_EXPECTED_WINDOW_SECTORS). DJ validation is therefore against the expected
+ * ~28 GiB vendor window floored at the sampled extent, NOT a measurement of the
+ * real device. Region offsets/lengths are DECLARED partition-table geometry
+ * from the MBR, not verified bytes.
+ *
+ * Returns regions written (<= max), or 0 when n == 0 or out == NULL. */
 size_t cbm_entropy_regions(const cbm_entropy_sample_t *samples, size_t n,
                            const unsigned char *mbr, size_t mbr_len,
                            cbm_entropy_region_t *out, size_t max);
@@ -95,7 +107,8 @@ size_t cbm_entropy_regions(const cbm_entropy_sample_t *samples, size_t n,
 /* Write a deterministic JSON sidecar to path. Field order and shape:
  * {"block_bytes":N,"samples":N,"width":N,"height":N,"entropy":{"min":D,
  * "mean":D,"max":D},"regions":[{"name":"...","offset":N,"length":N,
- * "samples":N,"min":D,"mean":D,"max":D,"inferred":true}]}\n
+ * "samples":N,"min":D,"mean":D,"max":D,"inferred":true|false}]}\n
+ * inferred mirrors the caller's r->inferred (regions from this module are 1).
  * D is fixed-point %u.%06u with a literal '.' (never locale-dependent).
  * block_bytes is the largest sample length (0 when n == 0). n == 0 emits
  * valid JSON with empty arrays. Returns 0 or -1 with a message in err. */

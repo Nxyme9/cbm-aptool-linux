@@ -307,6 +307,13 @@ size_t cbm_entropy_regions(const cbm_entropy_sample_t *samples, size_t n,
                                           CBM_EXPECTED_WINDOW_SECTORS
                                           ? sampled_sectors
                                           : CBM_EXPECTED_WINDOW_SECTORS;
+        /* Honesty contract: this API has no disk-size argument, so there is no
+         * real device capacity to validate against. disk_sectors is synthesized
+         * as max(sampled_sectors, CBM_EXPECTED_WINDOW_SECTORS); DJ validation is
+         * therefore against the expected ~28 GiB vendor window floored at the
+         * sampled extent, NOT a measurement of the real device. Every region
+         * offset/length below is DECLARED partition-table geometry from the
+         * MBR, not verified bytes. */
         if (cbm_layout_validate(&layout, disk_sectors) == 0) {
             static const char *const names[3] = {"DJ_BOOT", "DJ_OS", "DJ_DATA"};
             for (int i = 0; i < layout.part_count && i < 3; i++) {
@@ -443,7 +450,7 @@ int cbm_entropy_json(const char *path, const cbm_entropy_sample_t *samples,
             write_fixed(f, r->min) != 0 || fputs(",\"mean\":", f) == EOF ||
             write_fixed(f, r->mean) != 0 || fputs(",\"max\":", f) == EOF ||
             write_fixed(f, r->max) != 0 ||
-            fputs(",\"inferred\":true}", f) == EOF) {
+            fputs(r->inferred ? ",\"inferred\":true}" : ",\"inferred\":false}", f) == EOF) {
             rc = -1;
         }
     }

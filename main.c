@@ -974,6 +974,7 @@ static int heatmap_mode(int argc, char **argv) {
     }
     if (block_mib > (unsigned long long)(SIZE_MAX / 1048576ULL)) {
         fprintf(stderr, "Error: --block too large for this build\n");
+        print_heatmap_usage(argv[0]);
         return 2;
     }
     const size_t block_bytes = (size_t)(block_mib * 1048576ULL);
@@ -983,13 +984,29 @@ static int heatmap_mode(int argc, char **argv) {
         fprintf(stderr, "Error: cannot determine image size for '%s'\n", path);
         return 1;
     }
-    const unsigned long long sectors = last_lba + 1ULL;
-    if (sectors > ULLONG_MAX / (unsigned long long)CBM_SECTOR_SIZE) {
-        fprintf(stderr, "Error: image byte range overflows\n");
-        return 2;
+    struct stat st;
+    if (stat(path, &st) != 0) {
+        fprintf(stderr, "Error: cannot stat image '%s'\n", path);
+        return 1;
     }
-    const unsigned long long end_byte =
-        sectors * (unsigned long long)CBM_SECTOR_SIZE;
+    unsigned long long end_byte;
+    if (S_ISREG(st.st_mode)) {
+        /* Exclusive byte end: regular images may end mid-sector (or be empty),
+         * and cbm_file_read requires the exact requested byte count. */
+        if (st.st_size < 0) {
+            fprintf(stderr, "Error: image has a negative size '%s'\n", path);
+            return 1;
+        }
+        end_byte = (unsigned long long)st.st_size;
+    } else {
+        /* Block devices keep whole-sector LBA semantics and the old guard. */
+        const unsigned long long sectors = last_lba + 1ULL;
+        if (sectors > ULLONG_MAX / (unsigned long long)CBM_SECTOR_SIZE) {
+            fprintf(stderr, "Error: image byte range overflows\n");
+            return 2;
+        }
+        end_byte = sectors * (unsigned long long)CBM_SECTOR_SIZE;
+    }
 
     /* Reuse the scan CLI guard: no inode/realpath logic is duplicated here. */
     if (png_path &&
