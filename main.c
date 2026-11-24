@@ -164,7 +164,7 @@ static void print_container_usage(const char *prog) {
         "  --offset N       byte offset on block device (default 0)\n"
         "  --write-back     write re-encrypted container back to target\n"
         "  --output <p>     write re-encrypted container to a different file\n"
-        "  --hex-full       full hex dump (default: first 256 + last 64 bytes)\n"
+        "  --hex-full       full hex dump (default: first 320 + last 320 bytes)\n"
         "  --min-string N   minimum printable string length (default 4)\n",
         prog);
 }
