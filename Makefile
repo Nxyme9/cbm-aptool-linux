@@ -1,5 +1,5 @@
 # Linux-native CBMUsbDisk tool
-# Crypto: mmap-at-ImageBase PE harness (32-bit x86, runs natively on x86-64 Linux)
+# Crypto: pure-C clean-room cipher by default; PE harness via --pe-crypto
 # Container/pacing: native C
 
 CC = gcc
@@ -14,17 +14,17 @@ PE ?= /tmp/opencode/ap.exe
 
 all: $(TARGET) $(TESTS)
 
-$(TARGET): main.c tea_crypto.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c
-	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c $(LDFLAGS)
+$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c
+	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c $(LDFLAGS)
 
-test_tea: test_tea.c tea_crypto.c
-	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c $(LDFLAGS)
+test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h
+	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c $(LDFLAGS)
 
-test_tea_native: test_tea_native.c tea_native.c
-	$(CC) $(CFLAGS) -I. -o $@ test_tea_native.c tea_native.c $(LDFLAGS)
+test_tea_native: test_tea_native.c tea_native.c tea_crypto.c cbm_backend.h
+	$(CC) $(CFLAGS) -I. -o $@ test_tea_native.c tea_native.c tea_crypto.c $(LDFLAGS)
 
-test_cbm: test_cbm.c cbm_container.c tea_crypto.c
-	$(CC) $(CFLAGS) -o $@ test_cbm.c cbm_container.c tea_crypto.c $(LDFLAGS)
+test_cbm: test_cbm.c cbm_container.c tea_crypto.c tea_native.c cbm_backend.h
+	$(CC) $(CFLAGS) -o $@ test_cbm.c cbm_container.c tea_crypto.c tea_native.c $(LDFLAGS)
 
 test_paced: test_paced.c paced_write.c
 	$(CC) $(CFLAGS) -o $@ test_paced.c paced_write.c $(LDFLAGS)

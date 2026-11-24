@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "tea_native.h"
+#include "cbm_backend.h"
 
 #define KEY TEA_NATIVE_KEY
 #define PE_PATH "/tmp/opencode/ap.exe"
@@ -106,6 +107,23 @@ done:
     free(buf);
 }
 
+static void test_backend_flag_parsing(void) {
+    int backend = -1;
+    TEST("backend flag parsing");
+    if (cbm_backend_from_arg("--native-crypto", &backend) != 0 ||
+        backend != CBM_BACKEND_NATIVE) { FAIL("--native-crypto rejected or wrong enum"); return; }
+    backend = -1;
+    if (cbm_backend_from_arg("--pe-crypto", &backend) != 0 ||
+        backend != CBM_BACKEND_PE) { FAIL("--pe-crypto rejected or wrong enum"); return; }
+    backend = -1;
+    if (cbm_backend_from_arg("--bogus", &backend) == 0) { FAIL("unknown flag accepted"); return; }
+    if (cbm_backend_from_arg(NULL, &backend) == 0) { FAIL("NULL arg accepted"); return; }
+    if (cbm_backend_from_arg("", &backend) == 0) { FAIL("empty arg accepted"); return; }
+    if (cbm_backend_from_arg("--native-crypto", NULL) == 0) { FAIL("NULL out-param accepted"); return; }
+    if (backend != -1) { FAIL("rejected flag modified backend"); return; }
+    PASS();
+}
+
 static void test_selfcheck_when_pe_present(void) {
     TEST("PE oracle equivalence");
     if (access(PE_PATH, F_OK) != 0) {
@@ -124,6 +142,7 @@ int main(void) {
     test_two_calls_state_reset();
     test_short_key();
     test_odd_length_bounds();
+    test_backend_flag_parsing();
     test_selfcheck_when_pe_present();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;

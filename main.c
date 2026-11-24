@@ -15,6 +15,8 @@
 #include <errno.h>
 
 #include "tea_crypto.h"
+#include "cbm_backend.h"
+#include "tea_native.h"
 #include "cbm_container.h"
 #include "cbm_file.h"
 #include "cbm_inspect.h"
@@ -26,15 +28,58 @@
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
 
+/* Parse crypto backend flags once, before either mode branches. Recognised
+ * flags are stripped from argv so container mode never treats them as unknown
+ * options; the choice is stored for tea_init() via cbm_backend_set(). */
+static int parse_backend_flags(int argc, char **argv) {
+    int backend = CBM_BACKEND_NATIVE; /* native is the no-PE default */
+    int out = 1;                      /* preserve argv[0] */
+    for (int i = 1; i < argc; i++) {
+        int parsed;
+        if (cbm_backend_from_arg(argv[i], &parsed) == 0)
+            backend = parsed;         /* last flag wins */
+        else
+            argv[out++] = argv[i];
+    }
+    argv[out] = NULL;
+    cbm_backend_set(backend);
+    return out;
+}
+
+static void print_backend(void) {
+    if (cbm_backend_get() == CBM_BACKEND_PE)
+        printf("Crypto backend: PE harness (cross-check)\n");
+    else
+        printf("Crypto backend: native (clean-room)\n");
+}
+
+/* PE mode only: report whether the clean-room cipher matches the vendor
+ * oracle. Runs BEFORE tea_init() because the selfcheck maps and unmaps the PE
+ * at 0x400000 itself and would otherwise clobber the live backend mapping. */
+static void print_pe_selfcheck(const char *pe_path) {
+    if (cbm_backend_get() != CBM_BACKEND_PE || access(pe_path, F_OK) != 0)
+        return; /* a missing PE is reported by tea_init() as a hard error */
+    printf("PE self-check: %s\n",
+           tea_native_selfcheck(pe_path) == 0
+               ? "PASS (native byte-identical to PE)"
+               : "FAIL (native differs from PE)");
+}
+
 static int selftest(void) {
     printf("=== Self-Test ===\n");
+    print_backend();
     const char *pe_path = getenv("CBM_PE_PATH");
     if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    print_pe_selfcheck(pe_path);
     if (tea_init(pe_path) != 0) {
-        fprintf(stderr, "Failed to initialize crypto\n");
+        if (cbm_backend_get() == CBM_BACKEND_PE)
+            fprintf(stderr, "Failed to initialize crypto: PE harness '%s' could not load\n",
+                    pe_path);
+        else
+            fprintf(stderr, "Failed to initialize crypto: native backend unavailable\n");
         return 1;
     }
-    printf("Crypto initialized (TEA cores loaded from PE)\n");
+    printf("Crypto initialized\n");
 
     unsigned char test_data[64];
     for (int i = 0; i < 64; i++) test_data[i] = (unsigned char)(i * 7 + 3);
@@ -255,6 +300,7 @@ static int container_mode(int argc, char **argv) {
     int rc = 1;
 
     printf("=== Container Mode: %s ===\n", path);
+    print_backend();
     printf("Target type: %s; offset: %lld bytes\n",
            cbm_file_is_blockdev(path) ? "block device" : "regular file", offset);
     if (output) printf("Output file: %s (offset 0)\n", output);
@@ -264,13 +310,18 @@ static int container_mode(int argc, char **argv) {
 
     const char *pe_path = getenv("CBM_PE_PATH");
     if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
-    printf("Loading TEA cores from PE: %s\n", pe_path);
+    if (cbm_backend_get() == CBM_BACKEND_PE)
+        printf("Loading TEA cores from PE: %s\n", pe_path);
+    print_pe_selfcheck(pe_path);
     if (tea_init(pe_path) != 0) {
-        fprintf(stderr, "Error: failed to initialize crypto (TEA PE '%s' could not load); cannot proceed\n",
-                pe_path);
+        if (cbm_backend_get() == CBM_BACKEND_PE)
+            fprintf(stderr, "Error: failed to initialize crypto (TEA PE '%s' could not load); cannot proceed\n",
+                    pe_path);
+        else
+            fprintf(stderr, "Error: failed to initialize crypto (native backend); cannot proceed\n");
         return 1;
     }
-    printf("Crypto initialized (TEA cores loaded from PE)\n");
+    printf("Crypto initialized\n");
 
     if (cbm_file_read(path, offset, orig_cipher, CBM_CONTAINER_SIZE) != 0) {
         fprintf(stderr, "Error: failed to read %d bytes from '%s' at offset %lld\n",
@@ -454,6 +505,7 @@ out:
 }
 
 int main(int argc, char **argv) {
+    argc = parse_backend_flags(argc, argv);
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
     /* Container mode is a standalone mode: it loads the PE itself and must not
