@@ -23,6 +23,7 @@
 #include "cbm_file.h"
 #include "cbm_layout.h"
 #include "cbm_scan_report.h"
+#include "cli_json.h"
 
 #define DJ_DEFAULT_WINDOW_GIB 26ULL
 #define GIB_BYTES 1073741824ULL
@@ -400,7 +401,42 @@ void cbm_doctor_print_report(const cbm_doctor_report_t *r, FILE *out) {
     }
 }
 
-int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
+/* Doctor is also the MBR/layout JSON surface: there is no separate `layout`
+ * subcommand. Partitions are read from the target's real first sector when it
+ * parses; an unparsable sector yields an empty array, never the nominal
+ * candidate dressed up as a measurement. */
+static void doctor_emit_json(FILE *jf, const char *path,
+                             const cbm_doctor_report_t *r, int repair_performed) {
+    if (!jf) return;
+    cbm_json_t j;
+    cbm_json_object_begin(&j, jf, "doctor", "ok");
+    cbm_json_field_string(&j, "path", path);
+    cbm_json_field_u64(&j, "window_gib", r->window_gib);
+    cbm_json_field_bool(&j, "mbr_valid", r->mbr_ok);
+    cbm_json_array_begin(&j, "partitions");
+    unsigned char mbr[CBM_SECTOR_SIZE];
+    cbm_layout_t L;
+    if (cbm_file_read(path, 0, mbr, sizeof(mbr)) == 0 &&
+        cbm_layout_parse(mbr, sizeof(mbr), &L) == 0) {
+        static const char *names[4] = {"DJ_BOOT", "DJ_OS", "DJ_DATA", "PART3"};
+        for (int i = 0; i < L.part_count && i < 4; i++) {
+            cbm_json_element_object(&j);
+            cbm_json_field_string(&j, "name", names[i]);
+            cbm_json_field_u64(&j, "start_lba", L.parts[i].start_lba);
+            cbm_json_field_u64(&j, "sectors", L.parts[i].size_lba);
+            cbm_json_field_u64(&j, "type", L.parts[i].type);
+            cbm_json_field_bool(&j, "inferred", 0);
+            cbm_json_object_end(&j);
+        }
+    }
+    cbm_json_array_end(&j);
+    cbm_json_field_bool(&j, "repair_performed", repair_performed);
+    cbm_json_field_bool(&j, "dry_run", !repair_performed);
+    cbm_json_end(&j);
+}
+
+int cbm_doctor_cli_ex(int argc, char **argv, FILE *out, FILE *errout,
+                      FILE *json_out) {
     FILE *o = out ? out : stdout;
     FILE *e = errout ? errout : stderr;
     char err[512] = {0};
@@ -463,6 +499,7 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
         }
         cbm_doctor_print_report(&r, o);
         fprintf(o, "Dry run: no writes (read-only default).\n");
+        doctor_emit_json(json_out, path, &r, 0);
         return 0;
     }
     if (!do_yes || !backup) {
@@ -483,11 +520,17 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
     }
 
     cbm_doctor_report_t r;
+    memset(&r, 0, sizeof(r));
     if (cbm_doctor_report(path, window_gib, &r, err, sizeof(err)) == 0)
         cbm_doctor_print_report(&r, o);
     fprintf(o, "Repair: read=%d backup_written=%d backup_verified=%d "
               "mbr_written=%d readback_verified=%d backup=%s\n",
             rep.step_read, rep.step_backup_written, rep.step_backup_verified,
             rep.step_mbr_written, rep.step_readback_verified, backup);
+    doctor_emit_json(json_out, path, &r, 1);
     return 0;
+}
+
+int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
+    return cbm_doctor_cli_ex(argc, argv, out, errout, NULL);
 }

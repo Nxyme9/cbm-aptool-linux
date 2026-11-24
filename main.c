@@ -61,9 +61,133 @@
 #include "png_write.h"
 #include "cbm_doctor.h"
 #include "cbm_tui.h"
+#include "cli_json.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
+
+/* Strip bare --json before mode argument parsing. scan/heatmap keep the old
+ * sidecar spelling: --json followed by a non-flag token is still a path, while
+ * a final --json or one followed by another flag is the compact stdout form.
+ * container/diff/fuzz/doctor have no sidecar, so --json is always bare.
+ * Returns the updated argc and sets *json when a bare --json was removed. */
+static int strip_json_flags(int argc, char **argv, int *json) {
+    int sidecar = 0;
+    if (argc >= 2)
+        sidecar = (strcmp(argv[1], "scan") == 0 || strcmp(argv[1], "heatmap") == 0);
+    *json = 0;
+    for (int i = 2; i < argc;) {
+        if (strcmp(argv[i], "--json") != 0) { i++; continue; }
+        if (sidecar && i + 1 < argc && argv[i + 1][0] != '-') {
+            i += 2; /* --json <path> sidecar: leave both tokens to the mode */
+            continue;
+        }
+        *json = 1;
+        for (int k = i; k + 1 < argc; k++) argv[k] = argv[k + 1];
+        argv[--argc] = NULL;
+    }
+    return argc;
+}
+
+/* JSON mode runs the unchanged mode function with stdout pointed at a scratch
+ * file (so human prose is suppressed without touching dozens of print sites)
+ * and stderr pointed at a second scratch file. On success the one object the
+ * mode emitted is copied to the real stdout; on failure that partial object is
+ * discarded and a single error object is built from the captured human error.
+ * stderr is always replayed byte-for-byte. Nothing here changes a mode's
+ * return code or writes to the target. */
+typedef struct {
+    FILE *json_buf;
+    FILE *err_buf;
+    FILE *prose_sink;
+    int saved_out;
+    int saved_err;
+} cbm_json_capture_t;
+
+static void json_capture_restore(cbm_json_capture_t *c) {
+    (void)fflush(stdout);
+    (void)fflush(stderr);
+    if (c->saved_out >= 0) {
+        (void)dup2(c->saved_out, STDOUT_FILENO);
+        (void)close(c->saved_out);
+        c->saved_out = -1;
+    }
+    if (c->saved_err >= 0) {
+        (void)dup2(c->saved_err, STDERR_FILENO);
+        (void)close(c->saved_err);
+        c->saved_err = -1;
+    }
+}
+
+static int json_capture_start(cbm_json_capture_t *c) {
+    c->json_buf = NULL;
+    c->err_buf = NULL;
+    c->prose_sink = NULL;
+    c->saved_out = -1;
+    c->saved_err = -1;
+    c->json_buf = tmpfile();
+    c->err_buf = tmpfile();
+    c->prose_sink = tmpfile();
+    if (!c->json_buf || !c->err_buf || !c->prose_sink) goto fail;
+    (void)fflush(stdout);
+    (void)fflush(stderr);
+    c->saved_out = dup(STDOUT_FILENO);
+    c->saved_err = dup(STDERR_FILENO);
+    if (c->saved_out < 0 || c->saved_err < 0 ||
+        dup2(fileno(c->prose_sink), STDOUT_FILENO) < 0 ||
+        dup2(fileno(c->err_buf), STDERR_FILENO) < 0)
+        goto fail;
+    return 0;
+fail:
+    json_capture_restore(c);
+    if (c->json_buf) (void)fclose(c->json_buf);
+    if (c->err_buf) (void)fclose(c->err_buf);
+    if (c->prose_sink) (void)fclose(c->prose_sink);
+    c->json_buf = NULL;
+    c->err_buf = NULL;
+    c->prose_sink = NULL;
+    return -1;
+}
+
+static void json_capture_copy(FILE *src, FILE *dst) {
+    char buf[4096];
+    size_t n;
+    rewind(src);
+    while ((n = fread(buf, 1, sizeof(buf), src)) > 0)
+        if (fwrite(buf, 1, n, dst) != n) break;
+}
+
+/* Flatten captured human errors into one escaped JSON string. */
+static void json_capture_message(FILE *src, char *dst, size_t len) {
+    size_t n = 0;
+    if (!dst || !len) return;
+    rewind(src);
+    int ch;
+    while (n + 1u < len && (ch = fgetc(src)) != EOF) {
+        if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+        dst[n++] = (char)ch;
+    }
+    dst[n] = '\0';
+    while (n > 0u && dst[n - 1u] == ' ') dst[--n] = '\0';
+}
+
+static void json_capture_finish(cbm_json_capture_t *c, int rc,
+                                const char *command) {
+    json_capture_restore(c);
+    json_capture_copy(c->err_buf, stderr);
+    (void)fflush(stderr);
+    if (rc == 0) {
+        json_capture_copy(c->json_buf, stdout);
+    } else {
+        char msg[1024];
+        json_capture_message(c->err_buf, msg, sizeof(msg));
+        cbm_json_error(stdout, command, msg[0] ? msg : "command failed");
+    }
+    (void)fflush(stdout);
+    (void)fclose(c->json_buf);
+    (void)fclose(c->err_buf);
+    (void)fclose(c->prose_sink);
+}
 
 /* Parse crypto backend flags once, before either mode branches. Recognised
  * flags are stripped from argv so container mode never treats them as unknown
@@ -277,7 +401,7 @@ static int parse_nonneg_ll(const char *s, long long *out) {
 
 /* File-level container mode: decrypt, inspect, re-encrypt, verify. Writes
  * nothing unless --write-back or --output is given (safe default). */
-static int container_mode(int argc, char **argv) {
+static int container_mode(int argc, char **argv, FILE *json_out) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *output = NULL;
     const char *dump_plain = NULL;
@@ -549,6 +673,20 @@ static int container_mode(int argc, char **argv) {
     }
 
     printf("\nContainer mode: crypto roundtrip OK (no container authenticity claim)\n");
+    if (json_out) {
+        cbm_json_t j;
+        cbm_json_object_begin(&j, json_out, "container", "ok");
+        cbm_json_field_string(&j, "path", path);
+        cbm_json_field_string(&j, "backend", cbm_backend_get() == CBM_BACKEND_PE
+                              ? "pe" : "native");
+        cbm_json_field_u64(&j, "header_byte", orig_cipher[0]);
+        cbm_json_field_bool(&j, "encrypted", enc == CBM_ERR_ENCRYPTED);
+        cbm_json_field_u64(&j, "body_len", (unsigned long long)body_len);
+        cbm_json_field_fixed6(&j, "entropy_body",
+                              cbm_decode_entropy(plain + CBM_HEADER_SIZE, body_len));
+        cbm_json_field_bool(&j, "roundtrip_ok", 1);
+        cbm_json_end(&j);
+    }
     rc = 0;
 out:
     tea_cleanup();
@@ -591,7 +729,7 @@ static void print_body_entropy(const char *label, double value) {
     printf("%s %u.%06u\n", label, scaled / 1000000u, scaled % 1000000u);
 }
 
-static int diff_mode(int argc, char **argv) {
+static int diff_mode(int argc, char **argv, FILE *json_out) {
     const char *a_path = (argc >= 3) ? argv[2] : NULL;
     const char *b_path = (argc >= 4) ? argv[3] : NULL;
     long long ctx = 3;
@@ -636,6 +774,33 @@ static int diff_mode(int argc, char **argv) {
     print_body_entropy("entropy_body_b", cbm_decode_entropy(b, blen));
     puts("--- Changed ranges / heatmap ---");
     cbm_diff_print(a, alen, b, blen, (size_t)ctx, stdout);
+    if (json_out) {
+        /* With context 0 at most one range per two common-prefix bytes plus
+         * the trailing length range: one allocation is an exact upper bound. */
+        size_t common = alen < blen ? alen : blen;
+        size_t rcap = common / 2u + 2u;
+        cbm_diff_range_t *ranges = NULL;
+        size_t nr = 0;
+        if (rcap <= SIZE_MAX / sizeof(*ranges)) {
+            ranges = (cbm_diff_range_t *)malloc(rcap * sizeof(*ranges));
+            if (ranges)
+                nr = cbm_diff_ranges(a, alen, b, blen, (size_t)ctx, ranges, rcap);
+        }
+        cbm_json_t j;
+        cbm_json_object_begin(&j, json_out, "diff", "ok");
+        cbm_json_field_string(&j, "a", a_path);
+        cbm_json_field_string(&j, "b", b_path);
+        cbm_json_field_u64(&j, "body_len_a", (unsigned long long)alen);
+        cbm_json_field_u64(&j, "body_len_b", (unsigned long long)blen);
+        cbm_json_field_u64(&j, "context", (unsigned long long)ctx);
+        cbm_json_field_fixed6(&j, "entropy_body_a", cbm_decode_entropy(a, alen));
+        cbm_json_field_fixed6(&j, "entropy_body_b", cbm_decode_entropy(b, blen));
+        cbm_json_field_u64(&j, "changed_ranges", (unsigned long long)nr);
+        cbm_json_field_u64(&j, "changed_bytes",
+                           (unsigned long long)cbm_diff_changed_bytes(a, alen, b, blen));
+        cbm_json_end(&j);
+        free(ranges);
+    }
     free(a); free(b);
     return 0;
 }
@@ -672,7 +837,7 @@ static int parse_unsigned_arg(const char *s, unsigned long *out) {
     return 0;
 }
 
-static int fuzz_mode(int argc, char **argv) {
+static int fuzz_mode(int argc, char **argv, FILE *json_out) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *out = NULL;
     unsigned long mutate = 0, rounds = 0, seed = 0;
@@ -743,6 +908,17 @@ static int fuzz_mode(int argc, char **argv) {
     printf("Fuzz corpus: seed %lu, %u rounds x %u mutations -> '%s'\n",
            seed, (unsigned)rounds, (unsigned)mutate, out);
     printf("Fuzz mode: corpus verified (decrypt -> mutate -> encrypt -> decrypt)\n");
+    if (json_out) {
+        cbm_json_t j;
+        cbm_json_object_begin(&j, json_out, "fuzz", "ok");
+        cbm_json_field_string(&j, "path", path);
+        cbm_json_field_u64(&j, "seed", (unsigned long long)seed);
+        cbm_json_field_u64(&j, "rounds", (unsigned long long)rounds);
+        cbm_json_field_u64(&j, "mutations", (unsigned long long)mutate);
+        cbm_json_field_string(&j, "out", out);
+        cbm_json_field_bool(&j, "corpus_verified", 1);
+        cbm_json_end(&j);
+    }
     tea_cleanup();
     return 0;
 }
@@ -791,7 +967,7 @@ static int image_last_lba(const char *path, unsigned long long *last_lba) {
 
 /* Full-device, read-only scan. --carve and --json are the only writes and
  * are pre-flighted against the source inode before any output is opened. */
-static int scan_mode(int argc, char **argv) {
+static int scan_mode(int argc, char **argv, FILE *json_out) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *carve = NULL, *json = NULL;
     unsigned long long start_lba = 0ULL, end_lba = 0ULL, chunk_mib = 8ULL;
@@ -928,6 +1104,39 @@ static int scan_mode(int argc, char **argv) {
     }
     if (!json && !carve) puts("No report written (read-only default).");
     puts("Scan complete: candidates only, not confirmed containers.");
+    if (json_out) {
+        cbm_json_t jb;
+        cbm_json_object_begin(&jb, json_out, "scan", "ok");
+        cbm_json_field_string(&jb, "path", path);
+        cbm_json_field_u64(&jb, "start_lba", start_lba);
+        cbm_json_field_u64(&jb, "end_lba", end_lba);
+        cbm_json_field_u64(&jb, "candidates", (unsigned long long)n);
+        cbm_json_field_bool(&jb, "all_hits", all_hits);
+        cbm_json_array_begin(&jb, "hits");
+        for (size_t i = 0; i < n; i++) {
+            const cbm_scan_hit_t *h = &hits[i];
+            char sha[65];
+            for (size_t k = 0; k < 32u; k++)
+                snprintf(sha + k * 2u, 3u, "%02x", (unsigned)h->sha256[k]);
+            size_t nt = h->token_count > 8u ? 8u : h->token_count;
+            cbm_json_element_object(&jb);
+            cbm_json_field_u64(&jb, "offset", h->offset);
+            cbm_json_field_u64(&jb, "header", h->header);
+            cbm_json_field_fixed6(&jb, "entropy", h->entropy);
+            cbm_json_field_string(&jb, "sha256", sha);
+            cbm_json_array_begin(&jb, "tokens");
+            for (size_t k = 0; k < nt; k++) {
+                cbm_json_element_object(&jb);
+                cbm_json_field_u64(&jb, "offset", h->token_offsets[k]);
+                cbm_json_field_string(&jb, "text", h->tokens[k]);
+                cbm_json_object_end(&jb);
+            }
+            cbm_json_array_end(&jb);
+            cbm_json_object_end(&jb);
+        }
+        cbm_json_array_end(&jb);
+        cbm_json_end(&jb);
+    }
     rc = 0;
 out:
     cbm_scan_free_hits(hits);
@@ -966,7 +1175,7 @@ static void heatmap_fixed(char *dst, size_t dstlen, double v) {
  * (and the strictly O_RDONLY capacity probe in image_last_lba). --out and
  * --json are the only write targets, pre-flighted against the source inode
  * with the shared scan-report guard before either file is opened. */
-static int heatmap_mode(int argc, char **argv) {
+static int heatmap_mode(int argc, char **argv, FILE *json_out) {
     const char *path = (argc >= 3) ? argv[2] : NULL;
     const char *png_path = NULL, *json_path = NULL;
     unsigned long long block_mib = 1ULL;
@@ -1174,6 +1383,36 @@ static int heatmap_mode(int argc, char **argv) {
         printf("JSON: %s\n", json_path);
     }
     if (!png_path && !json_path) puts("No output written (read-only default).");
+    if (json_out) {
+        cbm_json_t jb;
+        cbm_json_object_begin(&jb, json_out, "heatmap", "ok");
+        cbm_json_field_string(&jb, "path", path);
+        cbm_json_field_u64(&jb, "block_bytes", (unsigned long long)block_bytes);
+        cbm_json_field_u64(&jb, "samples", (unsigned long long)nsamples);
+        cbm_json_field_u64(&jb, "width", (unsigned long long)width);
+        cbm_json_field_u64(&jb, "height", (unsigned long long)height);
+        cbm_json_object_start(&jb, "entropy");
+        cbm_json_field_fixed6(&jb, "min", emin);
+        cbm_json_field_fixed6(&jb, "mean", nsamples ? esum / (double)nsamples : 0.0);
+        cbm_json_field_fixed6(&jb, "max", emax);
+        cbm_json_object_end(&jb);
+        cbm_json_array_begin(&jb, "regions");
+        for (size_t i = 0; i < nregions; i++) {
+            const cbm_entropy_region_t *r = &regions[i];
+            cbm_json_element_object(&jb);
+            cbm_json_field_string(&jb, "name", r->name);
+            cbm_json_field_u64(&jb, "offset", r->offset);
+            cbm_json_field_u64(&jb, "length", r->length);
+            cbm_json_field_u64(&jb, "samples", (unsigned long long)r->samples);
+            cbm_json_field_fixed6(&jb, "min", r->min);
+            cbm_json_field_fixed6(&jb, "mean", r->mean);
+            cbm_json_field_fixed6(&jb, "max", r->max);
+            cbm_json_field_bool(&jb, "inferred", r->inferred);
+            cbm_json_object_end(&jb);
+        }
+        cbm_json_array_end(&jb);
+        cbm_json_end(&jb);
+    }
     rc = 0;
 out:
     free(rgb);
@@ -1320,18 +1559,30 @@ done:
 
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
+    const char *command = (argc >= 2) ? argv[1] : NULL;
+    int json = 0;
+    argc = strip_json_flags(argc, argv, &json);
+    cbm_json_capture_t cap;
+    FILE *json_out = NULL;
+    if (json && json_capture_start(&cap) != 0) json = 0; /* fall back to prose */
+    if (json) json_out = cap.json_buf;
+    int rc = 0;
+
+    if (!json) {
+        printf("CBMUsbDisk Linux-Native Tool v1.0\n");
+        printf("==================================\n\n");
+    }
     /* --all-hits is scan-only. Reject it before dispatch so no other mode and
      * no bare invocation can mistake it for a device path or ignore it. */
     if (argc >= 2 && strcmp(argv[1], "scan") != 0) {
         for (int i = 1; i < argc; i++) {
             if (strcmp(argv[i], "--all-hits") == 0) {
                 fprintf(stderr, "Error: --all-hits is only valid with scan\n");
-                return 2;
+                rc = 2;
+                goto done;
             }
         }
     }
-    printf("CBMUsbDisk Linux-Native Tool v1.0\n");
-    printf("==================================\n\n");
     /* Container/fuzz/scan modes load the crypto backend themselves and must
      * not run the selftest first (that would init/cleanup TEA twice). diff and
      * heatmap are pure byte analysis and need no crypto at all. doctor/tui are
@@ -1339,22 +1590,27 @@ int main(int argc, char **argv) {
      * All seven subcommands are dispatched before the device path so nothing
      * can be mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
-        return container_mode(argc, argv);
-    if (argc >= 2 && strcmp(argv[1], "diff") == 0)
-        return diff_mode(argc, argv);
-    if (argc >= 2 && strcmp(argv[1], "fuzz") == 0)
-        return fuzz_mode(argc, argv);
-    if (argc >= 2 && strcmp(argv[1], "scan") == 0)
-        return scan_mode(argc, argv);
-    if (argc >= 2 && strcmp(argv[1], "heatmap") == 0)
-        return heatmap_mode(argc, argv);
-    if (argc >= 2 && strcmp(argv[1], "doctor") == 0)
-        return cbm_doctor_cli(argc, argv, stdout, stderr);
-    if (argc >= 2 && strcmp(argv[1], "tui") == 0)
-        return tui_mode(argc, argv);
+        rc = container_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "diff") == 0)
+        rc = diff_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "fuzz") == 0)
+        rc = fuzz_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "scan") == 0)
+        rc = scan_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "heatmap") == 0)
+        rc = heatmap_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "doctor") == 0)
+        rc = cbm_doctor_cli_ex(argc, argv, stdout, stderr, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "tui") == 0)
+        rc = tui_mode(argc, argv);
+    else if (selftest() != 0)
+        rc = 1;
+    else if (argc > 1)
+        rc = verify_device(argv[1]);
+    else
+        printf("\nAll systems operational.\n");
 
-    if (selftest() != 0) return 1;
-    if (argc > 1) return verify_device(argv[1]);
-    printf("\nAll systems operational.\n");
-    return 0;
+done:
+    if (json) json_capture_finish(&cap, rc, command);
+    return rc;
 }

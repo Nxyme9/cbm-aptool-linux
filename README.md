@@ -275,6 +275,16 @@ vendor measurement**: DJ_BOOT LBA 2048 / 1048576 LBAs / type `0x0c`, DJ_OS LBA
 type `0x07`, zero CHS bytes, signature `0x55AA`. Supported windows are 26..28
 GiB; a 29 GiB request is rejected with an error containing `26..28`.
 
+Every analysis mode (`container`, `diff`, `fuzz`, `scan`, `heatmap`, `doctor`)
+also accepts a bare `--json` flag: it prints exactly one compact `cbm/1` object
+on stdout in place of the prose, keeps the same exit codes, and still replays
+the human error message on stderr. `scan` and `heatmap` retain their existing
+`--json <report.json>` sidecar spelling — a final `--json` (or one followed by
+another flag) is the bare form. There is no separate `layout` subcommand:
+`doctor --json` is the layout JSON surface. See
+[docs/cli-json-contract.md](docs/cli-json-contract.md) for the envelope and the
+stable per-mode fields.
+
 ## Strictly read-only TUI
 
     ./cbm-tool tui <device|image>

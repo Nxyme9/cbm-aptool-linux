@@ -89,4 +89,10 @@ void cbm_doctor_print_steps(const cbm_doctor_repair_t *r, FILE *out, const char 
  * Exit 0 success, 1 runtime/refusal, 2 usage (missing flags or alias). */
 int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout);
 
+/* Same CLI with an optional compact-JSON success object target. json_out NULL
+ * keeps the prose-only behaviour; a non-NULL stream receives one object on
+ * success (doctor is the layout JSON surface: no separate layout command). */
+int cbm_doctor_cli_ex(int argc, char **argv, FILE *out, FILE *errout,
+                      FILE *json_out);
+
 #endif /* CBM_DOCTOR_H */
