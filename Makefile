@@ -15,6 +15,8 @@ LDFLAGS = -m32 -Wl,-z,relro,-z,now
 # These rebuild in place, run every binary, then restore the normal build.
 SAN_FLAGS = -fsanitize=address,undefined -fno-omit-frame-pointer
 FUZZ_SECONDS ?= 60
+# Local `make ci` uses a short fuzz smoke; Actions uses the 60s default.
+CI_FUZZ_SECONDS ?= 5
 FUZZ_CC = clang
 FUZZ_CFLAGS = -m32 -O1 -g -Wall -Wextra -fsanitize=fuzzer,address \
               -fno-omit-frame-pointer -I.
@@ -139,7 +141,41 @@ fuzz: $(FUZZ_BINS)
 	  tail -3 /tmp/opencode/fuzz-$$b.log; \
 	done
 
+# Phase 0 exit gate: local mirror of the Actions jobs. No device, no PE, no
+# network. All logs land under /tmp/opencode for provenance. Rejection-test
+# fixtures contain /dev/sd* strings; the audit below checks actual opens and
+# block ioctls in tests instead of forbidding the strings themselves.
+ci:
+	@set -e; \
+	$(MAKE) clean >/dev/null; \
+	$(MAKE) all > /tmp/opencode/ci-build.log 2>&1; \
+	if grep -n 'warning:' /tmp/opencode/ci-build.log; then \
+	  echo 'ci: compiler warning detected'; exit 1; \
+	fi; \
+	echo 'ci: build OK (0 warnings)'; \
+	$(MAKE) test > /tmp/opencode/ci-test.log 2>&1; \
+	awk '/^Results:/ {p+=$$2; f+=$$4; s+=$$6; n++} END {printf "ci suite: %d Results lines, %d passed, %d failed, %d skipped\n", n, p, f, s}' /tmp/opencode/ci-test.log; \
+	echo 'ci: suite OK'; \
+	$(MAKE) asan > /tmp/opencode/ci-asan.log 2>&1; \
+	echo 'ci: asan OK'; \
+	$(MAKE) fuzz FUZZ_SECONDS=$(CI_FUZZ_SECONDS) > /tmp/opencode/ci-fuzz.log 2>&1; \
+	echo 'ci: fuzz smoke OK'; \
+	shellcheck test_backend_cli.sh scripts/check-counts.sh; \
+	echo 'ci: shellcheck OK'; \
+	gitleaks detect --source . --no-git --redact > /tmp/opencode/ci-gitleaks.log 2>&1; \
+	echo 'ci: gitleaks OK'; \
+	sh scripts/check-counts.sh --self-test > /tmp/opencode/ci-counts-selftest.log 2>&1; \
+	echo 'ci: count verifier self-test OK'; \
+	if grep -rnE '(open|fopen|openat)\([^;]*"/dev/' --include='*.c' --include='*.h' .; then \
+	  echo 'ci: literal device open in source'; exit 1; \
+	fi; \
+	if grep -rnE 'ioctl\([^;]*BLKGETSIZE64' --include='test_*.c' --include='*.sh' .; then \
+	  echo 'ci: block ioctl in test'; exit 1; \
+	fi; \
+	echo 'ci: device-open audit OK'; \
+	echo 'ci: PASS'
+
 clean:
 	rm -f $(TARGET) $(CLI) $(TESTS) $(FUZZ_BINS) *.o
 
-.PHONY: all test test-cli asan fuzz $(FUZZ_BINS) clean
+.PHONY: all test test-cli asan fuzz $(FUZZ_BINS) ci clean
