@@ -1,5 +1,6 @@
 /* test_cbm_decode.c - CBM container decode entropy/region tests */
 #define _GNU_SOURCE
+#include <locale.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -174,6 +175,61 @@ static void test_profile_rows(void) {
     if (ok) PASS(); else FAIL("profile row format/kind names wrong");
 }
 
+static void test_profile_locale_independent(void) {
+    TEST("cbm_decode_profile: '.' decimal point under a comma-decimal locale");
+
+    /* setlocale() returns a pointer to internal storage: copy it before any
+     * candidate call overwrites it, and restore it on every exit path. */
+    const char *original = setlocale(LC_NUMERIC, NULL);
+    char *saved = original ? strdup(original) : NULL;
+    if (!saved) { FAIL("cannot save LC_NUMERIC"); return; }
+
+    static const char *const candidates[] = {
+        "de_DE.UTF-8", "de_DE.utf8", "es_ES.UTF-8", "es_ES.utf8",
+        "fr_FR.UTF-8", "fr_FR.utf8"
+    };
+    const char *chosen = NULL;
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); i++) {
+        if (setlocale(LC_NUMERIC, candidates[i]) != NULL) {
+            struct lconv *lc = localeconv();
+            if (lc && lc->decimal_point && strcmp(lc->decimal_point, ".") != 0) {
+                chosen = candidates[i];
+                break;
+            }
+        }
+    }
+    if (!chosen) {
+        setlocale(LC_NUMERIC, saved);
+        free(saved);
+        printf("SKIP: no comma-decimal locale installed (tried de_DE/es_ES/fr_FR)\n");
+        return;
+    }
+    printf("[%s] ", chosen);
+
+    /* Constant window gives exactly 0.000000; printable window gives a
+     * non-zero entropy that would also be corrupted by a comma separator. */
+    unsigned char b[128];
+    memset(b, 'A', 64);
+    for (size_t i = 64; i < sizeof(b); i++) b[i] = (unsigned char)('a' + (i % 26));
+
+    int ok = 0;
+    char *text = NULL;
+    size_t tlen = 0;
+    FILE *m = open_memstream(&text, &tlen);
+    if (!m) { FAIL("open_memstream"); }
+    else {
+        cbm_decode_profile(b, sizeof(b), m);
+        fflush(m);
+        ok = text && strstr(text, "0.000000") != NULL && strchr(text, ',') == NULL;
+        fclose(m);
+        free(text);
+    }
+
+    setlocale(LC_NUMERIC, saved); /* never leak the changed locale */
+    free(saved);
+    if (ok) PASS(); else FAIL("profile entropy must use a literal '.' decimal point");
+}
+
 int main(void) {
     printf("=== CBM Decode Tests ===\n");
     test_entropy_constant();
@@ -186,6 +242,7 @@ int main(void) {
     test_regions_cap();
     test_profile_does_not_read_past();
     test_profile_rows();
+    test_profile_locale_independent();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

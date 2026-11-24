@@ -30,8 +30,9 @@ size_t cbm_decode_regions(const unsigned char *buf, size_t len,
                           cbm_region_t *out, size_t max);
 
 /* Print one "offset length entropy kind" row per window to out using the
- * stable format "%zu %zu %.6f %s\n" and kind names constant/string/opaque.
- * Never reads past buf+len. */
+ * stable, locale-independent format "%zu %zu %u.%06u %s\n": entropy is
+ * fixed-point with exactly six decimals after a literal '.', and kind names
+ * are constant/string/opaque. Never reads past buf+len. */
 void cbm_decode_profile(const unsigned char *buf, size_t len, FILE *out);
 
 #endif /* CBM_DECODE_H */

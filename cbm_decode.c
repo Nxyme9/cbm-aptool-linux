@@ -107,8 +107,13 @@ void cbm_decode_profile(const unsigned char *buf, size_t len, FILE *out) {
         size_t n = (len - off < CBM_DECODE_WINDOW)
                    ? (len - off) : CBM_DECODE_WINDOW;
         cbm_region_kind_t kind = classify_window(buf + off, n);
-        fprintf(out, "%zu %zu %.6f %s\n", off, n,
-                cbm_decode_entropy(buf + off, n), kind_name(kind));
+        /* Emit entropy as fixed-point integer text with a literal '.' so rows
+         * stay machine-parseable under any process LC_NUMERIC. Entropy <= 8.0
+         * here, so scaled <= 8000000 and fits an unsigned int on 32-bit. */
+        double entropy = cbm_decode_entropy(buf + off, n);
+        unsigned scaled = (unsigned)(entropy * 1000000.0 + 0.5);
+        fprintf(out, "%zu %zu %u.%06u %s\n", off, n,
+                scaled / 1000000u, scaled % 1000000u, kind_name(kind));
         off += n;
     }
 }
