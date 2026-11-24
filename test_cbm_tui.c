@@ -3,6 +3,7 @@
  * No tty, no device and no filesystem access: the render function is called
  * with a fixed synthetic state and its exact bytes are asserted.
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -149,6 +150,42 @@ static void test_zero_dimensions(void) {
     if (ok) PASS(); else FAIL("zero dimensions must not crash or truncate");
 }
 
+static void test_long_target_truncated_to_width(void) {
+    TEST("tui: 255-char target is truncated to the requested width");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    memset(st.target, 'X', sizeof(st.target) - 1u);
+    st.target[sizeof(st.target) - 1u] = '\0';
+    char *out = cbm_tui_render(&st, 80, 24);
+    int ok = 0;
+    if (out != NULL) {
+        /* The full frame starts with \033[H\033[2J; skip it because the
+         * line checker treats a digit followed by 'J' as malformed. */
+        static const char CLEAR[] = "\033[H\033[2J";
+        if (strncmp(out, CLEAR, sizeof(CLEAR) - 1u) == 0) {
+            const char *body = out + sizeof(CLEAR) - 1u;
+            ok = (strstr(body, "device=XXXX") != NULL && lines_well_formed(body, 80));
+        }
+    }
+    free(out);
+    if (ok) PASS(); else FAIL("every rendered line must fit the requested width");
+}
+
+static void test_non_finite_entropy_deterministic(void) {
+    TEST("tui: NaN/Inf/-0.0 entropy renders deterministically as 0.000000");
+    cbm_tui_state_t st;
+    fixed_state(&st);
+    st.entropy_min = NAN;
+    st.entropy_mean = INFINITY;
+    st.entropy_max = -0.0;
+    char *a = cbm_tui_render(&st, 80, 24);
+    char *b = cbm_tui_render(&st, 80, 24);
+    int ok = (a != NULL && b != NULL && strcmp(a, b) == 0 &&
+              strstr(a, "entropy min=0.000000 mean=0.000000 max=0.000000") != NULL);
+    free(a); free(b);
+    if (ok) PASS(); else FAIL("non-finite/-0.0 entropy must clamp deterministically");
+}
+
 int main(void) {
     printf("=== CBM TUI Tests ===\n");
     test_snapshot_exact_bytes();
@@ -156,6 +193,8 @@ int main(void) {
     test_compact_terminal();
     test_tiny_terminal();
     test_zero_dimensions();
+    test_long_target_truncated_to_width();
+    test_non_finite_entropy_deterministic();
     printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

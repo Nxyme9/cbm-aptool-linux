@@ -8,6 +8,7 @@
 #define _FILE_OFFSET_BITS 64
 #define _LARGEFILE64_SOURCE
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,11 +56,74 @@ static void fixed_gib(unsigned long long bytes, char *dst, size_t len) {
 static int parse_ull(const char *s, unsigned long long *out) {
     char *end = NULL;
     if (!s || !*s) return -1;
+    /* strtoull("-1") yields ULLONG_MAX with errno == 0; reject any sign so a
+     * negative --window-gib is a usage error (exit 2), never a silent 2^64-1. */
+    if (*s == '-' || *s == '+') return -1;
     errno = 0;
     unsigned long long v = strtoull(s, &end, 10);
     if (errno != 0 || end == s || *end != '\0') return -1;
     *out = v;
     return 0;
+}
+
+static void reason_set(char *reason, size_t len, const char *fmt, ...) {
+    if (!reason || !len) return;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(reason, len, fmt, ap);
+    va_end(ap);
+}
+
+/* THE SINGLE repair-authorisation predicate (Wave 5D review fix). It implements
+ * exactly the frozen clause: repair is allowed when EITHER
+ *   (a) the first 512 bytes FAIL cbm_layout_parse (bad/absent 0x55AA signature),
+ *       OR
+ *   (b) they parse AND are DJ-shaped (exactly three non-empty partition
+ *       entries) AND FAIL cbm_layout_validate.
+ * A parseable table that is NOT DJ-shaped (e.g. a legitimate foreign single-
+ * partition disk) stays REFUSED: the shape test exists so we never silently
+ * rewrite a foreign disk's partition table into the nominal DJ layout. An
+ * already-valid DJ MBR is also refused (nothing to repair). Window/size
+ * preconditions are folded in here too so `repairable` cannot disagree with
+ * the repair path's early refusals.
+ *
+ * Both cbm_doctor_report (for the printed `repairable` verdict) and
+ * cbm_doctor_repair (for the write gate) call THIS function. There is no
+ * second, divergent copy of the authorisation rule.
+ */
+static int repair_authorised(const unsigned char *mbr, size_t mbrlen,
+                             unsigned long long bytes,
+                             unsigned long long window_gib,
+                             char *reason, size_t reasonlen) {
+    if (window_gib < 26ULL || window_gib > 28ULL) {
+        reason_set(reason, reasonlen,
+                   "window_gib %llu out of supported range 26..28", window_gib);
+        return 0;
+    }
+    if (bytes < window_gib * GIB_BYTES) {
+        reason_set(reason, reasonlen,
+                   "target (%llu bytes) is smaller than --window-gib %llu GiB",
+                   bytes, window_gib);
+        return 0;
+    }
+    cbm_layout_t L;
+    if (cbm_layout_parse(mbr, mbrlen, &L) != 0) {
+        reason_set(reason, reasonlen,
+                   "invalid MBR signature or unparsable table (clause a)");
+        return 1; /* clause (a): unparsable sector may be reconstructed */
+    }
+    if (L.part_count != 3) {
+        reason_set(reason, reasonlen,
+                   "parsable non-DJ table with %d partition(s); refusing to "
+                   "overwrite a foreign disk", L.part_count);
+        return 0; /* parseable but not DJ-shaped -> foreign, refuse */
+    }
+    if (cbm_layout_validate(&L, check_sectors(bytes)) == 0) {
+        reason_set(reason, reasonlen, "first sector is already a valid DJ MBR");
+        return 0; /* nothing to repair */
+    }
+    reason_set(reason, reasonlen, "DJ-shaped table failed layout validation (clause b)");
+    return 1; /* clause (b): broken DJ table may be reconstructed */
 }
 
 int cbm_doctor_report(const char *path, unsigned long long window_gib,
@@ -85,6 +149,10 @@ int cbm_doctor_report(const char *path, unsigned long long window_gib,
     out->dj_ok = parsed && (cbm_layout_validate(&L, check_sectors(bytes)) == 0);
     out->window_consistent = (window_gib >= 26ULL && window_gib <= 28ULL &&
                               bytes >= window_gib * GIB_BYTES);
+    /* ONE shared predicate drives both this verdict and the repair write
+     * gate; no input can be reported repairable yet refused (or vice versa). */
+    out->repairable = repair_authorised(mbr, sizeof(mbr), bytes, window_gib,
+                                       out->repair_reason, sizeof(out->repair_reason));
 
     /* Always build the nominal candidate, even for a non-DJ source: the
      * printed report shows what a repair WOULD write (never written here). */
@@ -160,16 +228,14 @@ int cbm_doctor_repair(const char *path, const char *backup,
     memcpy(out->original, current, sizeof(current));
     out->step_read = 1;
 
-    /* Authorisation predicate: only a first sector that FAILS the signature
-     * parse may be repaired. An already-valid DJ table and any parsable
-     * non-DJ (foreign) table are both refused, without touching the target. */
-    cbm_layout_t L;
-    if (cbm_layout_parse(current, sizeof(current), &L) == 0) {
-        if (cbm_layout_validate(&L, ds) == 0)
-            return seterr(err, errlen,
-                          "first sector is already a valid DJ MBR; refusing to rewrite");
-        return seterr(err, errlen,
-                      "first sector is a parsable non-DJ table; refusing to overwrite");
+    /* ONE shared predicate is the write gate (same one the report used).
+     * Parse-failure or DJ-shaped-but-invalid is authorised; a foreign table
+     * or an already-valid DJ MBR is refused without touching the target. */
+    char areason[256] = {0};
+    if (!repair_authorised(current, sizeof(current), bytes, window_gib,
+                           areason, sizeof(areason))) {
+        if (err && errlen) snprintf(err, errlen, "%s", areason);
+        return 1;
     }
 
     /* Fixed verified sequence. Only LBA 0 of `path` is ever written. */
@@ -189,11 +255,30 @@ int cbm_doctor_repair(const char *path, const char *backup,
 
     unsigned char readback[CBM_SECTOR_SIZE];
     if (cbm_file_read(path, 0, readback, sizeof(readback)) != 0 ||
-        memcmp(readback, cand, sizeof(cand)) != 0)
-        return seterr(err, errlen, "LBA 0 read-back verification failed");
+        memcmp(readback, cand, sizeof(cand)) != 0) {
+        /* Name the backup: it is the only copy of the original sector now. */
+        cbm_doctor_readback_error(err, errlen, backup);
+        return -1;
+    }
     memcpy(out->readback, readback, sizeof(readback));
     out->step_readback_verified = 1;
     return 0;
+}
+
+void cbm_doctor_readback_error(char *err, size_t errlen, const char *backup) {
+    if (!err || !errlen) return;
+    snprintf(err, errlen,
+             "LBA 0 read-back verification failed; original sector is in backup %s",
+             backup ? backup : "(unknown)");
+}
+
+void cbm_doctor_print_steps(const cbm_doctor_repair_t *r, FILE *out, const char *backup) {
+    if (!r || !out) return;
+    fprintf(out, "Repair: read=%d backup_written=%d backup_verified=%d "
+                 "mbr_written=%d readback_verified=%d backup=%s\n",
+            r->step_read, r->step_backup_written, r->step_backup_verified,
+            r->step_mbr_written, r->step_readback_verified,
+            backup ? backup : "(unknown)");
 }
 
 void cbm_doctor_print_report(const cbm_doctor_report_t *r, FILE *out) {
@@ -206,6 +291,8 @@ void cbm_doctor_print_report(const cbm_doctor_report_t *r, FILE *out) {
             r->mbr_ok ? "VALID" : "INVALID", r->dj_ok ? "VALID" : "INVALID",
             r->window_gib, size);
     fprintf(out, "Window consistent: %s\n", r->window_consistent ? "yes" : "no");
+    fprintf(out, "Repairable: %s (%s)\n", r->repairable ? "yes" : "no",
+            r->repair_reason[0] ? r->repair_reason : "not repairable");
     fprintf(out, "nominal reconstruction (candidate valid=%s):\n",
             r->candidate_ok ? "yes" : "no");
     cbm_layout_t L;
@@ -245,8 +332,13 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
             }
             backup = argv[i];
         } else if (strcmp(a, "--window-gib") == 0) {
-            if (++i >= argc || parse_ull(argv[i], &window_gib) != 0) {
+            if (++i >= argc) {
                 fprintf(e, "Error: --window-gib requires a non-negative integer\n");
+                return 2;
+            }
+            if (parse_ull(argv[i], &window_gib) != 0) {
+                fprintf(e, "Error: --window-gib requires a non-negative integer (got '%s')\n",
+                        argv[i]);
                 return 2;
             }
         } else {
@@ -284,6 +376,7 @@ int cbm_doctor_cli(int argc, char **argv, FILE *out, FILE *errout) {
     }
     if (rc != 0) {
         fprintf(e, "Refused: %s\n", err);
+        cbm_doctor_print_steps(&rep, e, backup);
         return 1;
     }
 

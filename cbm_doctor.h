@@ -8,8 +8,12 @@
  *   - backup path pre-flighted with the shared cbm_scan_report_check_output
  *     guard before either path is opened;
  *   - the nominal candidate must pass cbm_layout_parse + cbm_layout_validate;
- *   - the current first sector must NOT already be a valid DJ MBR with a
- *     valid signature (a parsable non-DJ table is never overwritten).
+ *   - the shared repair_authorised() predicate must agree: either the first
+ *     512 bytes fail cbm_layout_parse, OR they parse and are DJ-shaped
+ *     (exactly three non-empty entries) but fail cbm_layout_validate. A
+ *     parseable non-DJ (foreign) table and an already-valid DJ MBR are both
+ *     refused. The report derives its `repairable` field from this SAME
+ *     predicate, so diagnosis and repair can never disagree.
  * Fixed sequence: read -> write backup -> re-read backup (memcmp) ->
  * write candidate LBA 0 -> read back (memcmp) -> report every step.
  *
@@ -29,10 +33,12 @@ typedef struct {
     int dj_ok;              /* parsed AND validated as the DJ layout */
     int window_consistent;  /* target size >= --window-gib window */
     int candidate_ok;       /* nominal candidate parses + validates */
+    int repairable;         /* SAME predicate the repair path gates on */
     int part_count;         /* partitions found in the current first sector */
     unsigned long long size_bytes;
     unsigned long long window_gib;
     unsigned char candidate[CBM_SECTOR_SIZE]; /* nominal reconstruction */
+    char repair_reason[192]; /* why repairable is yes/no; always non-empty */
     char verdict[128];
 } cbm_doctor_report_t;
 
@@ -59,9 +65,18 @@ int cbm_doctor_repair(const char *path, const char *backup,
                       unsigned long long window_gib,
                       cbm_doctor_repair_t *out, char *err, size_t errlen);
 
-/* Print one deterministic report (header, verdict, statuses and the nominal
- * candidate table) to out. */
+/* Print one deterministic report (header, verdict, statuses, the repairability
+ * verdict and the nominal candidate table) to out. */
 void cbm_doctor_print_report(const cbm_doctor_report_t *r, FILE *out);
+
+/* Format the LBA-0 read-back failure message. Always names the backup path so
+ * the original sector is recoverable; public for deterministic tests. */
+void cbm_doctor_readback_error(char *err, size_t errlen, const char *backup);
+
+/* Print the full repair step struct (all five step flags plus the backup path)
+ * to out. The CLI calls this on EVERY repair failure so the operator can see
+ * exactly which step completed and where the original sector was saved. */
+void cbm_doctor_print_steps(const cbm_doctor_repair_t *r, FILE *out, const char *backup);
 
 /* CLI entry: argv[0]=prog, argv[1]="doctor", argv[2]=target, options after.
  * Exit 0 success, 1 runtime/refusal, 2 usage (missing flags or alias). */

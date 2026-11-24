@@ -16,6 +16,7 @@ SCRATCH=$(mktemp -d /tmp/opencode/cbm-cli-backend.XXXXXX) || {
 }
 FIXTURE=$SCRATCH/container.bin
 MISSING_PE=$SCRATCH/no-such-ap.exe
+TUI_IMG=$SCRATCH/tui-synthetic.img
 
 passed=0
 failed=0
@@ -29,6 +30,13 @@ SKIP_CASE() { printf 'SKIP (%s)\n' "$1"; skipped=$((skipped + 1)); }
 # 85688-byte container: header byte 0x00 (unencrypted), zeros elsewhere.
 dd if=/dev/zero of="$FIXTURE" bs=85688 count=1 status=none || {
     printf 'FAIL: cannot create 85688-byte container fixture\n'
+    exit 1
+}
+
+# Synthetic 28-byte MBR-shaped regular image for the read-only TUI CLI rows.
+# No device node is touched; a zero signature is enough for diagnosis.
+dd if=/dev/zero of="$TUI_IMG" bs=512 count=1 status=none || {
+    printf 'FAIL: cannot create synthetic TUI fixture\n'
     exit 1
 }
 
@@ -86,6 +94,32 @@ else
     # Flag after "container <path>": parse_backend_flags() must strip it
     # before container_mode() sees the option list.
     run_case container-pe-flag "$PE_PATH" "$PE_LINE" "$CONTAINER_OK" container "$FIXTURE" --pe-crypto
+fi
+
+# TUI row: missing device/image path is a usage error (exit 2).
+TEST tui-no-device
+tui_out="$SCRATCH/tui-no-device.out"
+if "$TOOL" tui >"$tui_out" 2>&1; then
+    FAIL_CASE 'tui with no device unexpectedly exited 0'
+elif [ "$?" -ne 2 ]; then
+    FAIL_CASE 'tui with no device did not exit 2'
+else
+    PASS
+fi
+
+# TUI row: read-only on a synthetic image; quitting must not modify it.
+TEST tui-readonly-synthetic
+tui_out="$SCRATCH/tui-readonly.out"
+before=$(sha256sum "$TUI_IMG" | cut -d' ' -f1)
+if printf 'q' | "$TOOL" tui "$TUI_IMG" >"$tui_out" 2>&1; then
+    after=$(sha256sum "$TUI_IMG" | cut -d' ' -f1)
+    if [ "$before" = "$after" ]; then
+        PASS
+    else
+        FAIL_CASE 'synthetic image hash changed after read-only TUI'
+    fi
+else
+    FAIL_CASE 'tui on synthetic image did not exit 0'
 fi
 
 printf '\nScratch fixtures: %s\n' "$SCRATCH"

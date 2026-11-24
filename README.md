@@ -84,13 +84,20 @@ sequences and golden vectors.
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
 with 32-bit zlib-ng 1.3.1). Observed on this tree (2026-11-24) with the full
-chain `make clean && make && make test && sh test_backend_cli.sh`: **131 passing
-checks across 20 `Results:` lines / 148 `TEST:` lines, 0 failures**. Wave 5D
-adds three deterministic constructor checks to `test_layout` (5 -> 8), the
-12-check `test_cbm_doctor` suite and the 5-check `test_cbm_tui` suite. The
-shell CLI suite appears twice in that log because the chain runs it both
-inside `make test` and explicitly. All fixtures are synthetic regular files;
-no device is required.
+chain `make clean && make && make test && sh test_backend_cli.sh`: **142 passing
+checks across 20 `Results:` lines / 159 `TEST:` lines, 0 failures**.
+
+Count history (honest, from the logs only): the earlier 126 figure was not
+reproducible from the test logs — the 5F log sums to 111. The 131 figure was
+the observed sum across 20 suites after Wave 5D (+3 layout, +12 doctor, +5 TUI).
+The current 142 is that 131 plus 5 new doctor checks, 2 new TUI checks and
+2 new shell CLI checks counted twice (inside `make test` and the explicit run).
+
+Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
+the doctor suite (now 17 checks) and the TUI suite (now 7 checks). The shell
+CLI suite appears twice in that log because the chain runs it both inside
+`make test` and explicitly. All fixtures are synthetic regular files; no device
+is required.
 
 ## Device validation
 
@@ -213,19 +220,34 @@ synthetic regular files only.
     ./cbm-tool doctor <device|image> --repair-mbr --yes --backup <file>
                      [--window-gib 26|27|28]
 
+`--window-gib` **defaults to 26**; the supported windows are 26, 27 and 28 GiB.
+A negative value (e.g. `-1`) is a usage error (exit 2), never a silent wrap to
+`ULLONG_MAX`.
+
 The default is **READ-ONLY diagnosis**: any readable image is reported (DJ,
 parsable non-DJ, or invalid signature) and nothing is written. Repair occurs
-only when all three flags are present. The backup path is refused first by the
-shared scan alias guard (same inode, `realpath` match, or path under the
-source), before either path is opened. The nominal candidate is built by
-`cbm_layout_construct` and must pass `cbm_layout_parse` + `cbm_layout_validate`
-with `disk_sectors = max(target_size/512, CBM_EXPECTED_WINDOW_SECTORS)`. Repair
-then follows one fixed verified sequence: read LBA 0 → write backup → re-read
-backup + `memcmp` → write the reconstructed LBA 0 via `cbm_file_write` → read
-back + `memcmp` → report every step. Only LBA 0 of the target is ever written.
-An already-valid DJ MBR, a parsable non-DJ (foreign) table, or a target smaller
-than `--window-gib` is refused (exit 1); missing flags or an aliased backup are
-exit 2. Exit codes: 0 success, 1 runtime/refusal, 2 usage.
+only when all three flags are present. The report prints `Repairable: yes|no
+(reason)` from the same predicate the repair path gates on, so the verdict and
+the write gate cannot disagree. Repair is authorised when either the first
+512 bytes fail `cbm_layout_parse`, or they parse and are DJ-shaped (exactly
+three non-empty entries) but fail `cbm_layout_validate`. A parseable non-DJ
+(foreign) table is never silently rewritten; an already-valid DJ MBR is refused
+because there is nothing to repair.
+
+The backup path is refused first by the shared scan alias guard (same inode,
+`realpath` match, or path under the source), before either path is opened.
+Choose a `--backup` path in a directory you control and treat the backup as the
+recovery artefact: the alias guard runs before the backup is created, so a
+symlink swap in that directory is not re-checked (TOCTOU). The nominal candidate
+is built by `cbm_layout_construct` and must pass `cbm_layout_parse` +
+`cbm_layout_validate` with `disk_sectors = max(target_size/512,
+CBM_EXPECTED_WINDOW_SECTORS)`. Repair then follows one fixed verified sequence:
+read LBA 0 → write backup → re-read backup + `memcmp` → write the reconstructed
+LBA 0 via `cbm_file_write` → read back + `memcmp` → report every step. Only LBA 0
+of the target is ever written. A read-back failure names the backup path, and
+the CLI prints every step flag on any repair failure. A target smaller than
+`--window-gib` is refused (exit 1); missing flags or an aliased backup are exit
+2. Exit codes: 0 success, 1 runtime/refusal, 2 usage.
 
 Geometry is a **nominal convention from frozen spec Design Note 2, not a
 vendor measurement**: DJ_BOOT LBA 2048 / 1048576 LBAs / type `0x0c`, DJ_OS LBA
