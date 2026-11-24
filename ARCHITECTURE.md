@@ -96,8 +96,8 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   -1 on error.
 - `cbm_file_is_blockdev(path)`: return 1 when `path` is a block device, 0
   otherwise (including stat failure).
-- Backs the container mode's read/write/roundtrip path and the device
-  validation flow.
+- Backs the container mode's read/write/roundtrip path, including
+  block-device targets.
 - Unit tests: `test_cbm_file` (5/5).
 
 ### 8.2 cbm_inspect — container inspection
