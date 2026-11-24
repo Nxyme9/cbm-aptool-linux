@@ -1,0 +1,33 @@
+# Build artifacts
+*.o
+cbm-tool
+test_tea
+test_cbm
+test_paced
+test_usb_mass
+test_layout
+test_nand
+
+# Editor / OS
+*~
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / env
+.env
+.env.*
+*.key
+*.pem
+
+# Vendor binaries — never commit; users supply their own ap.exe
+*.exe
+*.dll
+*.sys
+*.bin
+
+# Scratch
+/tmp
+scratchpad
+"><|end|><|start|>start to=write<|channel|>analysis <|constrain|>xml<|message|><rfl:parameter name="path">
+/home/nxyme/Code-wt/cbm-aptool-linux/LICENSE
