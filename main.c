@@ -7,12 +7,18 @@
  *   cbm-tool container <path> [options]
  *                            read/decrypt/inspect/re-encrypt one 85688-byte
  *                            container; write only with --write-back/--output
+ *   cbm-tool diff <a.plain> <b.plain> [--context N]
+ *                            byte diff + entropy delta + heatmap, offline
+ *   cbm-tool fuzz <container> --mutate N --rounds N --seed N [--out <dir>]
+ *                            deterministic offline mutation corpus
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <limits.h>
 
 #include "tea_crypto.h"
 #include "cbm_backend.h"
@@ -24,6 +30,9 @@
 #include "usb_mass.h"
 #include "cbm_layout.h"
 #include "nand_info.h"
+#include "cbm_diff.h"
+#include "cbm_decode.h"
+#include "cbm_fuzz.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -504,14 +513,199 @@ out:
     return rc;
 }
 
+
+/* ---- offline body diff mode -------------------------------------------- */
+
+static void print_diff_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s diff <a.plain> <b.plain> [--context N]\n"
+        "  --context N   merge spans separated by <= N bytes (default 0)\n",
+        prog);
+}
+
+/* Whole-file read for plain bodies; no device path handling, exact allocation. */
+static int read_plain_file(const char *path, unsigned char **buf, size_t *len) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return -1;
+    if (fseeko(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
+    off_t end = ftello(f);
+    if (end < 0 || (unsigned long long)end > (unsigned long long)SIZE_MAX ||
+        fseeko(f, 0, SEEK_SET) != 0) { fclose(f); return -1; }
+    unsigned char *data = (unsigned char *)malloc((size_t)end ? (size_t)end : 1u);
+    if (!data) { fclose(f); return -1; }
+    size_t got = end ? fread(data, 1, (size_t)end, f) : 0;
+    int bad = ferror(f) || got != (size_t)end;
+    fclose(f);
+    if (bad) { free(data); return -1; }
+    *buf = data;
+    *len = (size_t)end;
+    return 0;
+}
+
+/* Integer fixed-point text with a literal '.' is locale-independent. Values
+ * come only from cbm_decode_entropy; no entropy math is duplicated here. */
+static void print_body_entropy(const char *label, double value) {
+    unsigned scaled = (unsigned)(value * 1000000.0 + 0.5);
+    printf("%s %u.%06u\n", label, scaled / 1000000u, scaled % 1000000u);
+}
+
+static int diff_mode(int argc, char **argv) {
+    const char *a_path = (argc >= 3) ? argv[2] : NULL;
+    const char *b_path = (argc >= 4) ? argv[3] : NULL;
+    long long ctx = 0;
+
+    if (!a_path || !b_path) {
+        fprintf(stderr, "Error: diff requires two plain body files\n");
+        print_diff_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 4; i < argc; i++) {
+        if (strcmp(argv[i], "--context") == 0) {
+            if (++i >= argc || parse_nonneg_ll(argv[i], &ctx) != 0 ||
+                (unsigned long long)ctx > (unsigned long long)SIZE_MAX) {
+                fprintf(stderr, "Error: --context needs a non-negative integer\n");
+                print_diff_usage(argv[0]);
+                return 2;
+            }
+        } else {
+            fprintf(stderr, "Error: unknown diff option '%s'\n", argv[i]);
+            print_diff_usage(argv[0]);
+            return 2;
+        }
+    }
+
+    unsigned char *a = NULL, *b = NULL;
+    size_t alen = 0, blen = 0;
+    if (read_plain_file(a_path, &a, &alen) != 0) {
+        fprintf(stderr, "Error: cannot read plain body '%s'\n", a_path);
+        free(a);
+        return 1;
+    }
+    if (read_plain_file(b_path, &b, &blen) != 0) {
+        fprintf(stderr, "Error: cannot read plain body '%s'\n", b_path);
+        free(a); free(b);
+        return 1;
+    }
+
+    printf("=== Diff Mode: %s vs %s ===\n", a_path, b_path);
+    printf("body sizes: a=%zu b=%zu context=%lld\n", alen, blen, ctx);
+    puts("--- Body entropy (bits/byte) ---");
+    print_body_entropy("entropy_body_a", cbm_decode_entropy(a, alen));
+    print_body_entropy("entropy_body_b", cbm_decode_entropy(b, blen));
+    puts("--- Changed ranges / heatmap ---");
+    cbm_diff_print(a, alen, b, blen, (size_t)ctx, stdout);
+    free(a); free(b);
+    return 0;
+}
+
+/* ---- deterministic offline fuzz mode ----------------------------------- */
+
+static void print_fuzz_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s fuzz <container> --mutate N --rounds N --seed N [--out <dir>]\n"
+        "  --out <dir>   existing directory for round-NNN.cbm and manifest.txt\n"
+        "                (required: fuzz never writes outside --out)\n",
+        prog);
+}
+
+/* Strict non-negative integer bounded to unsigned (the fuzz API's type). */
+static int parse_unsigned_arg(const char *s, unsigned long *out) {
+    if (!s || !*s || !out) return -1;
+    errno = 0;
+    char *end = NULL;
+    unsigned long v = strtoul(s, &end, 10);
+    if (errno != 0 || !end || end == s || *end != '\0' || v > UINT_MAX) return -1;
+    *out = v;
+    return 0;
+}
+
+static int fuzz_mode(int argc, char **argv) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    const char *out = NULL;
+    unsigned long mutate = 0, rounds = 0, seed = 0;
+    int have_mutate = 0, have_rounds = 0, have_seed = 0;
+
+    if (!path) {
+        fprintf(stderr, "Error: fuzz requires a container path\n");
+        print_fuzz_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--mutate") == 0 || strcmp(a, "--rounds") == 0 ||
+            strcmp(a, "--seed") == 0) {
+            unsigned long *slot = (strcmp(a, "--mutate") == 0) ? &mutate
+                                : (strcmp(a, "--rounds") == 0) ? &rounds : &seed;
+            if (++i >= argc || parse_unsigned_arg(argv[i], slot) != 0) {
+                fprintf(stderr, "Error: %s needs a non-negative integer\n", a);
+                print_fuzz_usage(argv[0]);
+                return 2;
+            }
+            if (slot == &mutate) have_mutate = 1;
+            else if (slot == &rounds) have_rounds = 1;
+            else have_seed = 1;
+        } else if (strcmp(a, "--out") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: --out needs a directory path\n");
+                print_fuzz_usage(argv[0]);
+                return 2;
+            }
+            out = argv[i];
+        } else {
+            fprintf(stderr, "Error: unknown fuzz option '%s'\n", a);
+            print_fuzz_usage(argv[0]);
+            return 2;
+        }
+    }
+    if (!have_mutate || !have_rounds || !have_seed || !out) {
+        fprintf(stderr, "Error: fuzz requires --mutate, --rounds, --seed and --out\n");
+        print_fuzz_usage(argv[0]);
+        return 2;
+    }
+
+    const char *pe_path = getenv("CBM_PE_PATH");
+    if (!pe_path || !pe_path[0]) pe_path = "/tmp/opencode/ap.exe";
+    printf("=== Fuzz Mode: %s ===\n", path);
+    print_backend();
+    if (cbm_backend_get() == CBM_BACKEND_PE)
+        printf("Loading TEA cores from PE: %s\n", pe_path);
+    print_pe_selfcheck(pe_path);
+    if (tea_init(pe_path) != 0) {
+        fprintf(stderr, "Error: failed to initialize crypto backend\n");
+        return 1;
+    }
+    printf("Crypto initialized\n");
+
+    char err[256];
+    err[0] = '\0';
+    if (cbm_fuzz_run(path, out, (unsigned)mutate, (unsigned)rounds,
+                     seed, err, sizeof(err)) != 0) {
+        fprintf(stderr, "Error: %s\n", err[0] ? err : "fuzz run failed");
+        tea_cleanup();
+        return 1;
+    }
+    printf("Fuzz corpus: seed %lu, %u rounds x %u mutations -> '%s'\n",
+           seed, (unsigned)rounds, (unsigned)mutate, out);
+    printf("Fuzz mode: corpus verified (decrypt -> mutate -> encrypt -> decrypt)\n");
+    tea_cleanup();
+    return 0;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     printf("CBMUsbDisk Linux-Native Tool v1.0\n");
     printf("==================================\n\n");
-    /* Container mode is a standalone mode: it loads the PE itself and must not
-     * run the selftest first (that would init/cleanup TEA twice). */
+    /* Container/fuzz modes load the crypto backend themselves and must not run
+     * the selftest first (that would init/cleanup TEA twice). diff is pure
+     * byte analysis and needs no crypto at all. All three subcommands are
+     * dispatched before the device path so nothing can be mistaken for a
+     * block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
         return container_mode(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "diff") == 0)
+        return diff_mode(argc, argv);
+    if (argc >= 2 && strcmp(argv[1], "fuzz") == 0)
+        return fuzz_mode(argc, argv);
 
     if (selftest() != 0) return 1;
     if (argc > 1) return verify_device(argv[1]);

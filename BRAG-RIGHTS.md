@@ -16,7 +16,7 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 |---|---|---|---|
 | 5A | **Clean-room TEA** | Reimplement the vendor cipher in pure C, byte-identical to the PE oracle. Tool runs with **zero** `ap.exe`. | S |
 | 5B | **Forensic scanner** | Sweep all 500 GiB for hidden `cbmv1001` containers, carve + JSON report. Needle in a haystack. | S |
-| 5C | **Decoder + fuzz lab** | `diff` two containers, seeded mutation fuzzing, and an honest field map of the undocumented format. | M |
+| 5C | **Decoder + fuzz lab** | `diff` two containers, seeded mutation fuzzing, and an honest field map of the undocumented format. Shipped in Wave 5C: `docs/container-format.md` marks interpretations **inferred**. | M |
 | 5D | **Doctor + live TUI** | Repair corrupted MBR/DJ layout behind `--repair-mbr --yes --backup`, plus a terminal dashboard. | M |
 
 ## Tier 2 — Jaw-dropping demos (best for "holy shit" reactions)
@@ -64,9 +64,9 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 
 ## Honest boundaries (keep these in every claim)
 
-- Vendor SCSI CDB set (Gap 1), `CBMUsbDisk.dll` internals (Gap 2), and NAND ECC/erase policy (Gap 3) are **still open**. Several ideas above attack them; none claim them solved.
+- Vendor SCSI CDB set (Gap 1), `CBMUsbDisk.dll` internals (Gap 2), NAND ECC/erase policy (Gap 3) and the container body field map (Gap 4) are **still open**. Several ideas above attack them; none claim them solved.
 - No vendor binary, key leak, or device serial is committed. Keys are allowlisted, serials redacted.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 72/72 tests, MIT.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 99/99 checks across fourteen suites, MIT.

@@ -2,7 +2,7 @@
 
 Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
 subsystem maps to one source file; all are exercised by the unit suite
-(72/72 across eleven suites, including CLI backend selection) and the
+(99/99 across fourteen suites, including CLI backend selection) and the
 real-device validation mode (`cbm-tool <blockdev>`).
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
@@ -88,6 +88,15 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   `--hex-full`, `--min-string`, `--dump-plain <path>` (decrypted 85687-byte
   body) and `--inject <path>` (exact-size replacement body, re-encrypted with
   the header preserved).
+- `cbm-tool diff <a.plain> <b.plain> [--context N]`: offline body diff via
+  `cbm_diff_print` (changed ranges, changed-byte count, entropy delta and
+  printable-density heatmap) and `cbm_decode_entropy`; no crypto, no device.
+- `cbm-tool fuzz <container> --mutate N --rounds N --seed N [--out <dir>]`:
+  deterministic offline mutation corpus via `cbm_fuzz_run`; refuses block
+  devices and source-as-`--out`, writes only under `--out`.
+- Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
+  → `diff` → `fuzz` → `verify_device(argv[1])`. Exit codes: 0 ok, 1 runtime
+  error, 2 usage error for `diff`/`fuzz`.
 - PE path overridable via `CBM_PE_PATH` env var (default
   `/tmp/opencode/ap.exe`). Only used by the opt-in PE backend; the native
   default ignores it.
@@ -194,6 +203,25 @@ maps and unmaps the PE at `0x400000` itself and would otherwise clobber the
 live backend mapping — and prints `PE self-check: PASS ...` on a byte-identical
 match. The PE remains the validation oracle, not a runtime dependency.
 
+## 9b. Decoder, diff and fuzz lab
+
+- `cbm_decode.{h,c}` (11/11): Shannon entropy and 64 B window classification
+  (`constant`/`string`/`opaque`). These are local heuristics, **not** recovered
+  vendor field types.
+- `cbm_diff.{h,c}` (11/11): context-merged changed ranges, changed-byte count,
+  locale-independent signed entropy delta, printable-density heatmap.
+- `cbm_fuzz.{h,c}` (5/5): xorshift64* seeded only by `--seed`; per-round
+  independent streams; each mutation XORs one body byte with a non-zero delta.
+  Manifest records file names, sizes, SHA-256 digests and the mutation list in
+  round order. Every round verifies re-decrypt equals the mutated plaintext
+  before writing; byte 0 is copied unchanged.
+- Safety: block-device source refused, `--out` must be an existing non-device
+  directory distinct from the source path and its directory; output paths that
+  resolve back to the source are refused; writes use stdio only, never
+  `cbm_file_write` (the paced device writer).
+- Format honesty: [docs/container-format.md](docs/container-format.md) labels
+  every interpretation **inferred** and lists what remains unknown.
+
 ## 10. PE loader library (`pelib.{h,c}`)
 
 One reusable fixed-base PE loader now serves the PE backend, the generic
@@ -238,8 +266,8 @@ section-copy loop.
     make clean && make && make test
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool`, the
-`pe-call` CLI, ten test binaries and one shell CLI suite. All 72 tests pass
-across eleven suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
+`pe-call` CLI, thirteen test binaries and one shell CLI suite. All 99 checks
+pass across fourteen suites (`test_tea` 6, `test_tea_native` 8, `test_cbm` 5,
 `test_paced` 5, `test_usb_mass` 3, `test_layout` 5, `test_nand` 3,
-`test_cbm_file` 5, `test_cbm_inspect` 9, `test_pelib` 19,
-`test_backend_cli.sh` 4).
+`test_cbm_file` 5, `test_cbm_inspect` 9, `test_pelib` 19, `test_cbm_decode` 11,
+`test_backend_cli.sh` 4, `test_cbm_diff` 11, `test_cbm_fuzz` 5).

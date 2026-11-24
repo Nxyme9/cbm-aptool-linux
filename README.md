@@ -9,7 +9,7 @@ container format used by the vendor APTool (`ap.exe`), and validates the
 resulting host-side path against a real Chipsbank USB mass-storage device.
 
 It does **not** redistribute any vendor binary and does **not** claim full
-protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
+protocol parity. See [GAPS.md](GAPS.md) for the four honest gaps.
 
 ## Working, verified
 
@@ -61,8 +61,8 @@ protocol parity. See [GAPS.md](GAPS.md) for the three honest gaps.
 
 `--native-crypto` selects the default explicitly; `--pe-crypto` selects the
 cross-check (last flag wins). Flags are stripped before mode dispatch, so
-they work in self-test, device-validation and `container` modes, in any
-position:
+they work in self-test, device-validation, `container`, `diff` and `fuzz`
+modes, in any position:
 
     ./cbm-tool --native-crypto
     ./cbm-tool --pe-crypto
@@ -80,13 +80,13 @@ sequences and golden vectors.
 
     make clean && make && make test
 
-Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 72/72 PASS
-across eleven suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
-layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, backend_cli 4). The
-four 5A PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and
-the two `test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied;
-eleven `test_pelib` cases need the vendor PE and fail without it. The remaining
-57 checks need no vendor binary.
+Requires gcc with 32-bit support (`gcc -m32`) and make. Expected: 99/99 PASS
+across fourteen suites (tea 6, tea_native 8, cbm 5, paced 5, usb_mass 3,
+layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, decode 11,
+backend_cli 4, diff 11, fuzz 5). The four 5A PE-dependent cases (`tea_native`
+PE oracle, `test_tea` PE dispatch and the two `test_backend_cli.sh` PE runs)
+skip (not fail) when no PE is supplied; eleven `test_pelib` cases need the
+vendor PE and fail without it. The remaining 84 checks need no vendor binary.
 
 ## Device validation
 
@@ -119,6 +119,27 @@ be exactly 85687 bytes. The header byte is preserved from the source container.
 Combine with `--output` for a new container or `--write-back` for in-place
 replacement (paced writes on block devices). Injection never changes the
 encryption flag or the container size.
+
+## Body diff, decoder and fuzz lab
+
+    ./cbm-tool diff old.plain new.plain [--context N]
+    ./cbm-tool fuzz container.bin --mutate 5 --rounds 2 --seed 42 --out ./corpus
+
+`diff` reads two already-decrypted 85687-byte bodies (use
+`container ... --dump-plain`) and prints merged changed ranges, a changed-byte
+count, entropy for each side plus a signed delta, and a printable-density
+heatmap. `--context N` merges spans separated by at most N bytes (default 0).
+Swapping the two files yields the same ranges.
+
+`fuzz` is an offline mutation lab: it decrypts one 85688-byte container,
+applies deterministic xorshift64* mutations from `--seed`, re-encrypts, proves
+`decrypt → encrypt` identity for every round, and writes only
+`<out>/round-NNN.cbm` plus `<out>/manifest.txt`. It refuses a block-device
+source and refuses when `--out` is missing, is a block device, or equals the
+source path or its directory. The same `--seed/--mutate/--rounds` produce
+byte-identical files. `--out` must already exist. See
+[docs/container-format.md](docs/container-format.md) for the format and its
+explicit **inferred** markers — the field map is deliberately incomplete.
 
 ## PE framework
 

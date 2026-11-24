@@ -39,7 +39,9 @@ crypto this repo ships.
   implemented.
 - **Host evidence:** `tea_native.{h,c}`, `tea_crypto.{h,c}` (dispatcher),
   `test_tea` (6/6), `test_tea_native` (8/8), `cbm_container` (5/5),
-  `test_pelib` (19/19), `test_backend_cli.sh` (4/4).
+  `test_pelib` (19/19), `test_backend_cli.sh` (4/4), `test_cbm_decode`
+  (11/11), `test_cbm_diff` (11/11) and `test_cbm_fuzz` (5/5) — 99 checks in
+  fourteen suites total.
 - **What would close it:** identify the correct key derivation (possibly
   tied to controller identity / serial) or unpack the DLL by other means.
 
@@ -56,12 +58,29 @@ crypto this repo ships.
   (CBM2199E / CBM2199s / CBM3380) and a vendor tool that exposes ECC
   counters.
 
+## Gap 4 — Container field map beyond byte 0 is incomplete
+
+- **What's missing:** no vendor schema for the 85687-byte body was recovered.
+  Its field names, record boundaries, checksums and optional segments are
+  unknown; the outer size/header/body split is only an **inferred** reading of
+  host-observable behaviour.
+- **What works instead:** deterministic decryption, 64 B entropy/region
+  classification and context-merged body diff give reproducible observations
+  without asserting vendor semantics. See
+  [docs/container-format.md](docs/container-format.md), where every
+  interpretation is explicitly marked **inferred**.
+- **Host evidence:** `cbm_container`, `cbm_decode` (11/11), `cbm_diff` (11/11),
+  `cbm_fuzz` (5/5). The fuzz lab proves `decrypt → encrypt` identity, not
+  semantic validity of mutated bodies.
+- **What would close it:** vendor documentation or a decrypted DLL/PE with the
+  container serialiser, plus corpus evidence of real field layouts.
+
 ## Summary
 
 | Capability | Status |
 |---|---|
 | TEA crypto core | Native clean-room & verified; PE is cross-check oracle |
-| CBM container format | Implemented & tested |
+| CBM container format | Outer layer implemented & tested; body field map **inferred**, incomplete |
 | Paced writes | Implemented & tested |
 | Linux USB mass-storage I/O | Implemented & tested |
 | MBR/DJ layout validation | Implemented & tested |
@@ -70,5 +89,6 @@ crypto this repo ships.
 | CBMUsbDisk.dll internals | **0/16 keys, not decrypted** (no longer blocks normal use) |
 | BCH ECC / balanced erase | **Firmware-internal** |
 
-This repo is an honest, reproducible partial RE. It is not a complete
+Current suite: 99 checks in fourteen suites (94 before Wave 5C task 3, plus
+5 fuzz checks). This repo is an honest, reproducible partial RE. It is not a complete
 protocol clone, and it is not a vendor binary redistribution.
