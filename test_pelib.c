@@ -220,6 +220,28 @@ static void test_optional_header_too_small(void) {
     PASS();
 }
 
+/* A 60-byte PE32 optional header is valid, but NumberOfRvaAndSizes at +92
+ * lies past EOF when the file ends at the header. pe_load must not read it
+ * before checking the optional-header size. The image is otherwise valid;
+ * reserving ImageBase makes pe_load reject it *after* header parsing, so the
+ * rejection path still reaches the would-be over-read (ASan catches it). */
+static void test_short_optional_header_no_overread(void) {
+    unsigned char buf[FAKE_PEOFF + 24u + 60u];
+    void *squatter;
+    TEST("short optional header: no data-directory over-read");
+    make_pe(buf, sizeof buf, FAKE_PEOFF, 0, 60u);
+    squatter = mmap((void *)BASE, MAPSZ, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0);
+    if (squatter == MAP_FAILED) { FAIL("could not reserve ImageBase for probe"); return; }
+    if (expect_rejected(buf, sizeof buf) != 0) {
+        munmap(squatter, MAPSZ);
+        FAIL("short optional header not rejected cleanly");
+        return;
+    }
+    munmap(squatter, MAPSZ);
+    PASS();
+}
+
 static void test_section_table_overflow(void) {
     unsigned char buf[FAKE_SIZE];
     TEST("section table offset overflow rejected");
@@ -487,6 +509,7 @@ int main(void) {
     test_truncated_header();
     test_e_lfanew_out_of_range();
     test_optional_header_too_small();
+    test_short_optional_header_no_overread();
     test_section_table_overflow();
     test_section_raw_out_of_bounds();
     test_second_load_rejected();

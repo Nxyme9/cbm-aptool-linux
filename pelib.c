@@ -184,7 +184,7 @@ int pe_load(pe_image_t **img, const char *path, const pe_import_hook_t *hooks) {
     pe_image_t *image = NULL;
     const unsigned char *opt;
     uint64_t sh, table_end;
-    uint32_t po, ns, os, declared_size;
+    uint32_t po, ns, os, declared_size, ndirs;
     void *m = MAP_FAILED;
     int mapped = 0;
     size_t n = 0, i;
@@ -249,11 +249,14 @@ int pe_load(pe_image_t **img, const char *path, const pe_import_hook_t *hooks) {
     image->image_size = (declared_size && declared_size <= PE_MAPSZ)
                             ? declared_size : PE_MAPSZ;
 
-    if (rd32(opt, DATA_DIR_COUNT_FIELD) > 0u && os >= DATA_DIR_BASE + 8u) {
+    /* NumberOfRvaAndSizes lives at +92, but a valid PE32 optional header can
+     * be as short as 60 bytes; guard the count read before performing it. */
+    ndirs = (os >= DATA_DIR_BASE) ? rd32(opt, DATA_DIR_COUNT_FIELD) : 0u;
+    if (ndirs > 0u && os >= DATA_DIR_BASE + 8u) {
         image->export_rva = rd32(opt, DATA_DIR_BASE);
         image->export_size = rd32(opt, DATA_DIR_BASE + 4u);
     }
-    if (rd32(opt, DATA_DIR_COUNT_FIELD) > 1u && os >= DATA_DIR_BASE + 16u) {
+    if (ndirs > 1u && os >= DATA_DIR_BASE + 16u) {
         image->import_rva = rd32(opt, DATA_DIR_BASE + 8u);
         image->import_size = rd32(opt, DATA_DIR_BASE + 12u);
     }
