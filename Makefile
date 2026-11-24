@@ -7,7 +7,7 @@ CFLAGS = -m32 -Wall -Wextra -O2 -g
 LDFLAGS = -m32
 
 TARGET = cbm-tool
-TESTS = test_tea test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect
+TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect
 
 # PE path overridable via CBM_PE_PATH env var; defaults to the APTool location.
 PE ?= /tmp/opencode/ap.exe
@@ -19,6 +19,9 @@ $(TARGET): main.c tea_crypto.c cbm_container.c cbm_file.c cbm_inspect.c paced_wr
 
 test_tea: test_tea.c tea_crypto.c
 	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c $(LDFLAGS)
+
+test_tea_native: test_tea_native.c tea_native.c
+	$(CC) $(CFLAGS) -I. -o $@ test_tea_native.c tea_native.c $(LDFLAGS)
 
 test_cbm: test_cbm.c cbm_container.c tea_crypto.c
 	$(CC) $(CFLAGS) -o $@ test_cbm.c cbm_container.c tea_crypto.c $(LDFLAGS)
@@ -42,7 +45,7 @@ test_cbm_inspect: test_cbm_inspect.c cbm_inspect.c
 	$(CC) $(CFLAGS) -o $@ test_cbm_inspect.c cbm_inspect.c $(LDFLAGS)
 
 test: $(TESTS)
-	./test_tea && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect
 
 clean:
 	rm -f $(TARGET) $(TESTS) *.o
