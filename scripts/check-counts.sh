@@ -121,16 +121,27 @@ run_self_test() {
 
     st_with_log=$st_tmp/with-pe.log
     st_without_log=$st_tmp/without-pe.log
+    # Derive every synthetic number from the live docs: a future count change
+    # must not require a second hand-typed literal in this self-test.
+    st_with_pass=$(grep -oE '[0-9]+ passed' "$st_docs/README.md" | sed -n '1p' | cut -d' ' -f1)
+    st_without_pass=$(grep -oE '[0-9]+ passed' "$st_docs/README.md" | sed -n '2p' | cut -d' ' -f1)
+    st_with_skip=$(grep -oE '[0-9]+ skipped' "$st_docs/README.md" | sed -n '1p' | cut -d' ' -f1)
+    st_without_skip=$(grep -oE '[0-9]+ skipped' "$st_docs/README.md" | sed -n '2p' | cut -d' ' -f1)
+    st_with_pelib=$(grep -oE '[0-9]+ passes with PE' "$st_docs/README.md" | sed -n '1p' | cut -d' ' -f1)
+    st_without_pelib=$(grep -oE '[0-9]+ without' "$st_docs/README.md" | sed -n '1p' | cut -d' ' -f1)
+    case "$st_with_pass$st_without_pass$st_with_skip$st_without_skip$st_with_pelib$st_without_pelib" in
+        *[!0-9]*|'') printf 'SELFTEST FAIL: cannot derive counts from docs\n' >&2; return 1 ;;
+    esac
     st_i=1
     while [ "$st_i" -le 19 ]; do
-        printf 'Results: 8 passed, 0 failed\n' >> "$st_with_log"
-        printf 'Results: 8 passed, 0 failed\n' >> "$st_without_log"
+        printf 'Results: 0 passed, 0 failed\n' >> "$st_with_log"
+        printf 'Results: 0 passed, 0 failed\n' >> "$st_without_log"
         st_i=$((st_i + 1))
     done
-    printf 'Results: 26 passed, 0 failed, 0 skipped\n' >> "$st_with_log"
-    printf 'Results: 20 passed, 0 failed, 4 skipped\n' >> "$st_without_log"
-    printf 'test_pelib: 21 passed, 0 failed\n' >> "$st_with_log"
-    printf 'test_pelib: 10 passed, 0 failed\n' >> "$st_without_log"
+    printf 'Results: %s passed, 0 failed, %s skipped\n' "$st_with_pass" "$st_with_skip" >> "$st_with_log"
+    printf 'Results: %s passed, 0 failed, %s skipped\n' "$st_without_pass" "$st_without_skip" >> "$st_without_log"
+    printf 'test_pelib: %s passed, 0 failed\n' "$st_with_pelib" >> "$st_with_log"
+    printf 'test_pelib: %s passed, 0 failed\n' "$st_without_pelib" >> "$st_without_log"
 
     if st_clean_out=$(sh "$st_script" "$st_with_log" "$st_without_log" "$st_tmp/docs" 2>&1); then
         st_clean_rc=0
@@ -138,7 +149,7 @@ run_self_test() {
         st_clean_rc=$?
     fi
 
-    if sed 's/178 passed/CORRUPTED passed/' "$st_tmp/corrupt-docs/README.md" > "$st_tmp/corrupt-readme" && \
+    if sed "s/${st_with_pass} passed/CORRUPTED passed/" "$st_tmp/corrupt-docs/README.md" > "$st_tmp/corrupt-readme" && \
        mv "$st_tmp/corrupt-readme" "$st_tmp/corrupt-docs/README.md"; then
         :
     else

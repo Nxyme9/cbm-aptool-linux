@@ -22,15 +22,15 @@ without evidence.
 
 ## Measured counts (scope)
 
-Measured on this tree at HEAD `38290cd`, from two fresh logs under
+Measured on this tree at HEAD `1208cbd`, from two fresh logs under
 `/tmp/opencode/`:
 
 - `nohl-final-with-pe.log` (`CBM_PE_PATH` pointed at the user's own PE):
-  **20 `Results:` lines summing to 178 passed, 0 failed, 0 skipped**; the
+  **20 `Results:` lines summing to 187 passed, 0 failed, 0 skipped**; the
   separately formatted `test_pelib` line reads `test_pelib: 21 passed,
   0 failed`.
 - `nohl-final-without-pe.log` (no usable PE: a bogus `CBM_PE_PATH`, the user's
-  file never moved or deleted): **20 `Results:` lines summing to 172 passed,
+  file never moved or deleted): **20 `Results:` lines summing to 181 passed,
   0 failed, 4 skipped**; the separately formatted `test_pelib` line reads
   `test_pelib: 10 passed, 0 failed`.
 
@@ -39,7 +39,7 @@ scope as the test commands (not merely echoed). Each log records the live value
 and whether the file exists; the no-PE SKIP reasons name the bogus path
 `/tmp/opencode/does-not-exist.exe`, which makes the evidence checkable.
 
-Scope: 178 and 172 are sums of the `Results:` lines only. The `test_pelib`
+Scope: 187 and 181 are sums of the `Results:` lines only. The `test_pelib`
 counts come from its own summary line and are **not** part of those sums. The
 4 skipped in the no-PE `Results:` sums come entirely from the two
 `test_backend_cli.sh` `Results:` lines (2 each); the PE-only skips in
@@ -83,7 +83,7 @@ synthetic regular files; no real device is touched.
   `test_tea` (6/6 with PE, 5/5 without), `test_tea_native` (8/8 with PE,
   7/7 without), `cbm_container` (5/5), the separately formatted
   `test_pelib` line (21 passes with PE, 10 without), `test_backend_cli.sh`
-  (11/11 with PE, 9 passed + 2 skipped without), `test_cbm_decode` (11/11),
+  (15 passed with PE, 13 passed + 2 skipped without), `test_cbm_decode` (11/11),
   `test_cbm_fuzz` (5/5), `test_cbm_scan` (11/11) and
   `test_cbm_scan_report` (4/4), `test_entropy_map` (8/8) and
   `test_png_write` (5/5), `test_cbm_doctor` (24/24) and `test_cbm_tui`
@@ -166,7 +166,7 @@ synthetic regular files; no real device is touched.
 | Container body field map | **Inferred only** (Gap 4, partially closed) |
 | Forensic scanner | Read-only candidate finder; `--all-hits` reports close hits (Gap 5, confirmation open) |
 
-Suite counts: **178 passed, 0 failed, 0 skipped** with PE and **172 passed,
+Suite counts: **187 passed, 0 failed, 0 skipped** with PE and **181 passed,
 0 failed, 4 skipped** without a usable PE, each across 20 `Results:` lines on
 this tree (2026-11-24); `test_pelib` is reported separately (21 / 10 passes).
 The whole-image entropy heatmap is read-only by default, infers regions from

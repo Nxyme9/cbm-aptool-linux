@@ -1,6 +1,6 @@
 # nx-cbm-lab
 
-Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 178 passing checks, no vendor binary, honest gaps.
+Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 187 passing checks, no vendor binary, honest gaps.
 
 ## What this is
 
@@ -90,9 +90,9 @@ recovered tables, flag sequences and golden vectors.
     make clean && make && make test
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
-with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `38290cd`, 2026-11-24)
+with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `1208cbd`, 2026-11-24)
 with the full chain `make clean && make && make test && sh test_backend_cli.sh`:
-**178 passed, 0 failed, 0 skipped** with PE and **172 passed, 0 failed,
+**187 passed, 0 failed, 0 skipped** with PE and **181 passed, 0 failed,
 4 skipped** with no usable PE, each across 20 `Results:` lines. The separately
 formatted `test_pelib` line reports 21 passes with PE and 10 without; those
 counts are outside the `Results:` sums. Both runs exited 0 (`cli_exit=0`,
