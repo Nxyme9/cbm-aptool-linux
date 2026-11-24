@@ -47,10 +47,12 @@
 #define CBM_SCAN_PREFIX_LEN 64u
 #define CBM_SCAN_PREFIX_PCT 80u
 
-/* Boundary anchor for the heuristic gate: this cipher self-synchronises, so
- * a window shifted a few LBAs can still decrypt most of a container's body
- * plausibly. Require both the first and last 64 plaintext bytes to be mostly
- * printable; shifted windows have garbage at the leading or trailing edge. */
+/* Weak boundary anchor for the heuristic gate: TEA-CBC self-synchronises on
+ * the 8-byte block grid, so a window shifted by a whole number of blocks
+ * decrypts a GENUINE plaintext suffix of the real body. Requiring both the
+ * first and last 64 plaintext bytes to be mostly printable mostly rejects
+ * windows that run off the end of the container; it is NOT proof of a start
+ * (see cluster suppression in cbm_scan_image). */
 #define CBM_SCAN_EDGE_LEN 64u
 #define CBM_SCAN_EDGE_PCT 80u
 
@@ -139,8 +141,11 @@ static int plausible(const unsigned char *body, size_t len, double entropy,
     /* Integer comparison; len is one container body (< 2^31 on any target). */
     if (printable * 100u < (size_t)CBM_SCAN_MIN_PRINTABLE_PCT * len) return 0;
 
-    /* Reject windows whose boundaries are garbage: the true container starts
-     * at a fresh CBC state, so a shifted window loses one edge. */
+    /* TEA-CBC self-synchronises on the 8-byte block grid: a window shifted by
+     * whole blocks decrypts a genuine plaintext suffix of the real body. This
+     * head/tail printable check is only a weak anchor that rejects windows
+     * running off the container's end; it is NOT proof of a container start.
+     * Overlapping suffix candidates are collapsed by cbm_scan_image below. */
     if (len < 2u * CBM_SCAN_EDGE_LEN) return 0;
     size_t head = 0, tail = 0;
     for (size_t i = 0; i < CBM_SCAN_EDGE_LEN; i++) {
@@ -221,6 +226,17 @@ size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
     return written;
 }
 
+/* Total order over absolute hit offsets. Used only by cbm_scan_image: the raw
+ * per-chunk hit list is NOT ordered because consecutive chunks re-scan the
+ * overlap with a higher base offset. */
+static int hit_offset_cmp(const void *a, const void *b) {
+    const cbm_scan_hit_t *ha = (const cbm_scan_hit_t *)a;
+    const cbm_scan_hit_t *hb = (const cbm_scan_hit_t *)b;
+    if (ha->offset < hb->offset) return -1;
+    if (ha->offset > hb->offset) return 1;
+    return 0;
+}
+
 int cbm_scan_image(const char *path, unsigned long long start_byte,
                    unsigned long long end_byte, size_t chunk_bytes,
                    const char *const *magics, size_t nmagic,
@@ -233,8 +249,21 @@ int cbm_scan_image(const char *path, unsigned long long start_byte,
     *out_count = 0;
     if (end_byte < start_byte)
         return seterr(err, errlen, "end byte is before start byte");
-    if (chunk_bytes <= CBM_CONTAINER_SIZE)
-        return seterr(err, errlen, "chunk must be larger than 85688 bytes");
+
+    /* Overlap is two containers plus one LBA: wide enough to hold a whole
+     * earlier container on re-scan while a second container straddles the
+     * boundary. It is the REAL minimum chunk size; the old check against one
+     * container let (85688, 171888] underflow the stride below. */
+    const size_t overlap = 2u * CBM_CONTAINER_SIZE + (size_t)CBM_SCAN_ALIGN;
+    if (chunk_bytes <= overlap)
+        return seterr(err, errlen,
+                      "chunk must exceed %zu bytes (2 containers + 1 LBA)",
+                      overlap);
+    /* chunk_bytes > overlap, so this cannot underflow or be zero. */
+    const unsigned long long stride = (unsigned long long)chunk_bytes - overlap;
+    if (stride == 0)
+        return seterr(err, errlen, "computed chunk stride is zero");
+
     if (start_byte > (unsigned long long)LLONG_MAX ||
         end_byte > (unsigned long long)LLONG_MAX)
         return seterr(err, errlen, "byte range exceeds signed 64-bit offset");
@@ -256,15 +285,7 @@ int cbm_scan_image(const char *path, unsigned long long start_byte,
 
     cbm_scan_hit_t *hits = NULL;
     size_t count = 0, cap = 0;
-    unsigned long long last_offset = 0;
-    int have_last = 0;
     unsigned long long cur = start_byte;
-    /* Overlap is two containers plus one LBA: the extra room lets one
-     * container sit wholly inside the overlap (proving dedupe on re-scan)
-     * while a second, separated container straddles the chunk boundary.
-     * >= 85688 bytes is the hard requirement; this is strictly stronger. */
-    const size_t overlap = 2u * CBM_CONTAINER_SIZE + (size_t)CBM_SCAN_ALIGN;
-    const unsigned long long stride = (unsigned long long)chunk_bytes - overlap;
 
     for (;;) {
         unsigned long long remaining = limit - cur + 1u;
@@ -312,28 +333,44 @@ int cbm_scan_image(const char *path, unsigned long long start_byte,
             cap = next;
         }
 
+        /* Keep every candidate for now: the overlap re-scans earlier offsets,
+         * and the cluster collapse below needs the full global candidate set
+         * (including shifted windows) to choose the lowest offset in each
+         * cluster. cbm_scan_buffer itself is deliberately left untouched. */
         size_t got = cbm_scan_buffer(chunk, want, magics, nmagic, 1,
                                      cur, hits + count, cap - count);
-        /* The 85688-byte overlap re-scans earlier candidates. Hits ascend, so
-         * dropping every offset already recorded dedupes exactly once. */
-        size_t kept = 0;
-        for (size_t i = 0; i < got; i++) {
-            cbm_scan_hit_t *h = &hits[count + i];
-            if (have_last && h->offset <= last_offset) continue;
-            if (kept != i) hits[count + kept] = *h;
-            last_offset = h->offset;
-            have_last = 1;
-            kept++;
-        }
-        count += kept;
+        count += got;
 
         if (stride > limit - cur) break;
         cur += stride;
     }
 
+    /* Explicit ascending-order guarantee. Consecutive chunks re-scan the
+     * overlap with a higher base offset, so the raw list is not ordered. */
+    if (count > 1) qsort(hits, count, sizeof(*hits), hit_offset_cmp);
+
+    /* Keep the LOWEST offset of each cluster of candidates closer together
+     * than one container. A window shifted by whole CBC blocks inside a real
+     * container decrypts a genuine plaintext suffix and can pass the gate;
+     * those suffix hits are duplicates, not distinct containers. Exact repeats
+     * from overlapping chunks collapse here too. Offsets are bounded by
+     * LLONG_MAX, so adding CBM_CONTAINER_SIZE cannot overflow.
+     * LIMITATION: two genuinely distinct containers whose starts are less
+     * than 85688 bytes apart are reported as one hit; this heuristic cannot
+     * separate them. */
+    size_t kept = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (kept > 0 &&
+            hits[i].offset <
+            hits[kept - 1].offset + (unsigned long long)CBM_CONTAINER_SIZE)
+            continue;
+        if (kept != i) hits[kept] = hits[i];
+        kept++;
+    }
+
     free(chunk);
     *out = hits;
-    *out_count = count;
+    *out_count = kept;
     return 0;
 }
 

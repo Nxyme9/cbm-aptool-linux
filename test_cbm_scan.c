@@ -30,6 +30,17 @@ static char g_root[256];
 /* UNVERIFIED: advisory magic only; structural detection must not depend on it. */
 static const char UNVERIFIED_MAGIC[] = "cbmv1001";
 
+/* Non-zero, NON-PRINTABLE filler for shifted-window regression fixtures.
+ * 0xa5 is outside printable ASCII (0x20-0x7e) and non-zero, so zero padding
+ * cannot mask duplicate-hit regressions. Its steady-state TEA-CBC decryption
+ * is constant (zero entropy), so filler-only windows fail the gate; a window
+ * shifted inside a real container only passes when its tail reaches another
+ * container's high-entropy ciphertext (the back-to-back fixture). */
+#define NONPRINT_FILLER 0xa5u
+static void fill_filler(unsigned char *buf, size_t len) {
+    memset(buf, NONPRINT_FILLER, len);
+}
+
 static void path_of(char *out, size_t outlen, const char *sub) {
     snprintf(out, outlen, "%s/%s", g_root, sub);
 }
@@ -139,12 +150,17 @@ static void test_two_containers_chunk_boundary(void) {
     const unsigned long long a = 1713ULL * LBA;
     const unsigned long long b = 2048ULL * LBA;
     const size_t img_len = (size_t)(b + CBM_CONTAINER_SIZE + LBA);
-    unsigned char *img = (unsigned char *)calloc(1, img_len);
+    unsigned char *img = (unsigned char *)malloc(img_len);
     cbm_scan_hit_t *hits = NULL;
     size_t n = 0;
     int ok = (img != NULL);
-    if (ok) ok = (make_container(img + a, 0x5a) == 0 &&
-                  make_container(img + b, 0xa5) == 0);
+    if (ok) {
+        /* Non-zero non-printable filler: a shifted window cannot hide in
+         * zero padding, so this fixture catches duplicate-hit regressions. */
+        fill_filler(img, img_len);
+        ok = (make_container(img + a, 0x5a) == 0 &&
+              make_container(img + b, 0xa5) == 0);
+    }
     if (ok) ok = (write_image(path, img, img_len) == 0);
     if (ok) {
         int rc = scan(path, 0, (unsigned long long)img_len - 1u, chunk,
@@ -322,6 +338,117 @@ static void test_short_image(void) {
     if (ok) PASS(); else FAIL("short image must not over-read or report a hit");
 }
 
+/* Two real containers as close as the 512-byte structural grid allows, with
+ * non-zero non-printable filler. A shifted window of container 1 runs into
+ * container 2's ciphertext, so zero padding cannot hide the duplicate class. */
+static void test_back_to_back_containers(void) {
+    TEST("cbm_scan_image: back-to-back containers suppress shifted windows");
+    char path[512];
+    path_of(path, sizeof(path), "back-to-back.img");
+    /* 85688 is not a multiple of 512, so two containers cannot BOTH start on
+     * the 512-byte grid at exactly A and A+CBM_CONTAINER_SIZE. Place B at the
+     * first aligned offset at/after A+CBM_CONTAINER_SIZE: 168*512 = 86016
+     * (a 328-byte filler gap). Shifted windows of A still land in B's body. */
+    const unsigned long long a = 4ULL * LBA;
+    const unsigned long long b = a + 168ULL * LBA;
+    const size_t img_len = (size_t)(b + CBM_CONTAINER_SIZE + LBA);
+    unsigned char *img = (unsigned char *)malloc(img_len);
+    cbm_scan_hit_t *hits = NULL;
+    size_t n = 0;
+    int ok = (img != NULL);
+    if (ok) {
+        fill_filler(img, img_len);
+        ok = (make_container(img + a, 0x5a) == 0 &&
+              make_container(img + b, 0xa5) == 0);
+    }
+    if (ok) ok = (write_image(path, img, img_len) == 0);
+    if (ok) {
+        int rc = scan(path, 0, (unsigned long long)img_len - 1u,
+                      4u * CBM_CONTAINER_SIZE, NULL, 0, &hits, &n);
+        ok = (rc == 0 && n == 2 &&
+              hits[0].offset == a && hits[1].offset == b &&
+              hits[0].header == 0x5a && hits[1].header == 0xa5 &&
+              sha_matches(&hits[0], img + a) &&
+              sha_matches(&hits[1], img + b));
+        if (!ok) printf("[n=%zu off0=%llu off1=%llu] ", n,
+                        n > 0 ? hits[0].offset : 0ULL,
+                        n > 1 ? hits[1].offset : 0ULL);
+    }
+    cbm_scan_free_hits(hits);
+    free(img);
+    if (ok) PASS(); else FAIL("expected exactly 2 hits at A and B, no shifted extras");
+}
+
+/* One real container in non-zero non-printable filler, image >= A+3 containers.
+ * Before cluster suppression, self-synchronised shifted windows yield >1 hit. */
+static void test_shifted_window_suppressed(void) {
+    TEST("cbm_scan_image: one container in non-zero filler yields exactly one hit");
+    char path[512];
+    path_of(path, sizeof(path), "shifted.img");
+    const unsigned long long a = 4ULL * LBA;
+    const size_t img_len = (size_t)(a + 3ULL * CBM_CONTAINER_SIZE);
+    unsigned char *img = (unsigned char *)malloc(img_len);
+    cbm_scan_hit_t *hits = NULL;
+    size_t n = 0;
+    int ok = (img != NULL);
+    if (ok) {
+        fill_filler(img, img_len);
+        ok = (make_container(img + a, 0x5a) == 0);
+    }
+    if (ok) ok = (write_image(path, img, img_len) == 0);
+    if (ok) {
+        int rc = scan(path, 0, (unsigned long long)img_len - 1u,
+                      4u * CBM_CONTAINER_SIZE, NULL, 0, &hits, &n);
+        ok = (rc == 0 && n == 1 && hits[0].offset == a &&
+              hits[0].header == 0x5a && sha_matches(&hits[0], img + a));
+        if (!ok) printf("[n=%zu off0=%llu] ", n,
+                        n > 0 ? hits[0].offset : 0ULL);
+    }
+    cbm_scan_free_hits(hits);
+    free(img);
+    if (ok) PASS(); else FAIL("single container must yield exactly one hit");
+}
+
+/* chunk_bytes <= overlap underflows the stride in the pre-fix walker; the
+ * guard must reject with an error and leave no partial results. Empty image
+ * keeps the boundary probes fast and avoids the pre-fix stride==0 loop. */
+static void test_chunk_size_guard(void) {
+    TEST("cbm_scan_image: chunk sizes <= overlap are rejected, overlap+1 accepted");
+    char path[512];
+    path_of(path, sizeof(path), "guard-empty.img");
+    const size_t overlap = 2u * (size_t)CBM_CONTAINER_SIZE + (size_t)LBA;
+    int ok = (write_image(path, NULL, 0) == 0);
+    if (ok) {
+        size_t bad[2] = { (size_t)CBM_CONTAINER_SIZE + 1u, overlap };
+        for (size_t i = 0; i < 2u; i++) {
+            cbm_scan_hit_t dummy;
+            cbm_scan_hit_t *hits = &dummy;
+            size_t n = 99;
+            char err[256];
+            err[0] = '\0';
+            int rc = cbm_scan_image(path, 0, 0, bad[i], NULL, 0,
+                                    &hits, &n, err, sizeof(err));
+            if (!(rc == -1 && err[0] != '\0' && hits == NULL && n == 0)) {
+                printf("[chunk=%zu rc=%d err='%s' hits_null=%d n=%zu] ",
+                       bad[i], rc, err, hits == NULL, n);
+                ok = 0;
+            }
+        }
+    }
+    if (ok) {
+        cbm_scan_hit_t dummy;
+        cbm_scan_hit_t *hits = &dummy;
+        size_t n = 99;
+        char err[256];
+        err[0] = '\0';
+        int rc = cbm_scan_image(path, 0, 0, overlap + 1u, NULL, 0,
+                                &hits, &n, err, sizeof(err));
+        ok = (rc == 0 && hits == NULL && n == 0);
+        if (!ok) printf("[overlap+1 rc=%d err='%s'] ", rc, err);
+    }
+    if (ok) PASS(); else FAIL("chunk <= overlap must be rejected with no partial results");
+}
+
 int main(void) {
     printf("=== Read-only CBM Scanner Tests ===\n");
     if (tea_init(NULL) != 0) {
@@ -343,6 +470,9 @@ int main(void) {
     test_structural_no_magic();
     test_range_lba();
     test_short_image();
+    test_back_to_back_containers();
+    test_shifted_window_suppressed();
+    test_chunk_size_guard();
 
     printf("\nScratch fixtures: %s\n", g_root);
     printf("Results: %d passed, %d failed\n", tests_passed, tests_failed);

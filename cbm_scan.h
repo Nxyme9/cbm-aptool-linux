@@ -38,14 +38,14 @@ typedef struct {
 } cbm_scan_hit_t;
 
 /* Scan one contiguous buffer. Returns the number of hits written, capped at
- * max; 0 when buf or out is NULL, max is 0, or len is shorter than one
- * container. base_offset is the buffer's absolute byte offset (it only affects
- * alignment and reported hit offsets). `magics` is an array of nmagic NUL-
- * terminated strings matched case-sensitively against the raw container
- * window; a NULL/0 magic list means no magic candidates. When `structural` is
- * non-zero every 512-byte-aligned absolute offset is also probed. Never reads
- * past buf+len. Crypto must be initialized; this calls tea_init(NULL) if it is
- * not already ready. */
+ * max; returns 0 under any error or zero-match condition: null `buf` or `out`,
+ * `max == 0`, buffer `len` shorter than one container (85688 bytes), bad computed
+ * body length, uninitialized crypto, allocation failure, or zero candidates/gate
+ * rejections. CALLERS MUST TREAT 0 AS “NO CANDIDATES IN THIS BUFFER”, NOT AS A
+ * GUARANTEE THAT THE BUFFER IS CLEAN. Note: cbm_scan_buffer itself does not
+ * suppress shifted self-synchronised duplicate hits; cluster suppression is
+ * performed exclusively by cbm_scan_image across chunk boundaries.
+ * base_offset is the buffer's absolute byte offset... */
 size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
                        const char *const *magics, size_t nmagic,
                        int structural, unsigned long long base_offset,
