@@ -15,7 +15,9 @@ checksums, authenticity, or semantic validity of the decrypted body.
 - `cbm_diff.{h,c}` — context-merged byte diff with locale-independent output.
 - `cbm_fuzz.{h,c}` — deterministic corpus generator with identity verification.
 - Host-observed containers and synthetic containers produced offline; **no**
-  vendor binary or device access is needed to reproduce any claim below.
+  vendor binary or device access is needed to reproduce any claim below. The
+  PE oracle is an explicit opt-in (`CBM_PE_PATH` with a user-supplied PE);
+  there is no default vendor path.
 
 ## 1. Outer container
 

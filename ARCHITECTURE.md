@@ -2,8 +2,9 @@
 
 Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks.
 Each subsystem maps to one source file; all are exercised by the unit suite
-(162 passing checks across twenty suites, including CLI backend selection) and the
-real-device validation mode (`cbm-tool <blockdev>`).
+(178 passed with PE / 172 passed with 4 skipped without a usable PE, across
+twenty `Results:` lines including CLI backend selection) and the real-device
+validation mode (`cbm-tool <blockdev>`). See [GAPS.md](GAPS.md) for count scope.
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
@@ -65,14 +66,14 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   - DJ_OS: 4 GiB, ext4
   - DJ_DATA: remainder, exFAT
 - Accepted stick capacity: 28 GiB (28672 MiB).
-- Unit tests: `test_layout` (5/5).
+- Unit tests: `test_layout` (8/8).
 
 ## 6. NAND controller identity probe (`nand_info.{h,c}`)
 
 - Host-observable only: reads sysfs/udev for VID/PID/vendor/model/driver.
 - Classifies the controller as Chipsbank-class (VID 048d).
 - Does **not** observe BCH ECC or balanced-erase policy (firmware-internal).
-- Unit tests: `test_nand` (3/3).
+- Unit tests: `test_nand` (10/10).
 
 ## 7. Entry point (`main.c`)
 
@@ -95,8 +96,10 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   deterministic offline mutation corpus via `cbm_fuzz_run`; refuses block
   devices and source-as-`--out`, writes only under `--out`.
 - `cbm-tool scan <device> [--start LBA] [--end LBA] [--chunk MiB] [--carve <dir>]
-  [--json <report>]`: read-only forensic candidate scan via `cbm_scan_image`
-  (`NULL, 0` magics — structural probe only), optional report writers in
+  [--json <report>] [--all-hits]`: read-only forensic candidate scan via
+  `cbm_scan_image` / `cbm_scan_image_ex` (`NULL, 0` magics — structural probe
+  only); `--all-hits` is scan-only, follows the image path, and keeps every
+  candidate instead of collapsing close clusters. Optional report writers in
   `cbm_scan_report.{h,c}`. No source write path; `--carve`/`--json` are
   pre-flighted with `cbm_scan_report_check_output` (realpath string match or
   `st_dev`/`st_ino`) and write only to the explicit paths. JSON field order is
@@ -105,9 +108,10 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
 - Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
   → `diff` → `fuzz` → `scan` → no-args self-test → `verify_device(argv[1])`.
   Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`.
-- PE path overridable via `CBM_PE_PATH` env var (default
-  `/tmp/opencode/ap.exe`). Only used by the opt-in PE backend; the native
-  default ignores it.
+- PE path comes only from the `CBM_PE_PATH` env var (or an explicit argument
+  to `pe-call`); there is no built-in default and no silent fallback.
+  `--pe-crypto` without it fails with an explicit error. Only the opt-in PE
+  backend reads it; the native default ignores it.
 
 ## 8. File-level container I/O (`cbm_file.{h,c}`, `cbm_inspect.{h,c}`)
 
@@ -185,14 +189,13 @@ the exact input.
 | B | bytes `00..1f` (32 bytes) | `3dd24f1e5c7d940ef690cfcc84ddff02660d74c782b22e1e4015059980c24f01` |
 | C | bytes `01..0f` (15 bytes, odd) | `1b787ed12c571f48090a0b0c0d0e0f` (only the first 8 bytes are encrypted) |
 
-`test_tea_native` (8/8) also covers state reset between calls, short-key
-rejection without buffer mutation, a 15-byte exact-allocation bounds check,
-and backend flag parsing. Its PE-oracle equivalence test compares native and
-PE ciphertext on deterministic inputs at nine lengths (8, 16, 24, 32, 64,
-15, 23, 31, 127) and skips when no PE is supplied. The PE-oracle equivalence
-test in `test_tea_native` reads the default path `/tmp/opencode/ap.exe` only
-and does not honour `CBM_PE_PATH`; that variable relocates the tool's
-`--pe-crypto` backend only.
+`test_tea_native` (8/8 with PE, 7/7 without a usable PE) also covers state
+reset between calls, short-key rejection without buffer mutation, a 15-byte
+exact-allocation bounds check, and backend flag parsing. Its PE-oracle
+equivalence test compares native and PE ciphertext on deterministic inputs at
+nine lengths (8, 16, 24, 32, 64, 15, 23, 31, 127) and skips when no usable
+PE is supplied. That test reads `CBM_PE_PATH`, the same variable the tool's
+`--pe-crypto` backend uses; there is no default vendor path.
 
 ### 9.4 Backend-selection flow
 
@@ -232,7 +235,7 @@ match. The PE remains the validation oracle, not a runtime dependency.
 
 ## 9c. Read-only scanner and report writers (`cbm_scan.{h,c}`, `cbm_scan_report.{h,c}`)
 
-- `cbm_scan.{h,c}` (10/10): 512-byte-aligned structural probe → full
+- `cbm_scan.{h,c}` (11/11): 512-byte-aligned structural probe → full
   85688-byte TEA decrypt → heuristic plausibility gate. `cbm_scan_image`
   reads in chunks with 171888-byte overlap, dedupes shifted/overlapping
   candidates by keeping the lowest offset per cluster, and returns hits
@@ -248,9 +251,12 @@ match. The PE remains the validation oracle, not a runtime dependency.
 - Honesty: no magic value is known (`docs/container-format.md`); `cbmv1001`
   is **UNVERIFIED** and only advisory. Detection is structural-only in the
   CLI (`NULL, 0` magics). Hits are **CANDIDATES**, not confirmed containers;
-  only aligned starts are probed, and two genuinely distinct containers
-  starting less than 85688 bytes apart cannot both be reported. Real-device
-  scanning is hardware-gated, not part of the suite.
+  only aligned starts are probed. The default scan collapses one cluster to
+  its lowest offset, while the scan-only opt-in `--all-hits` keeps every
+  candidate, including two genuinely distinct containers starting less than
+  85688 bytes apart. Confirmation still needs a recovered magic/header schema
+  (Gap 4) and a real-container corpus. Real-device scanning is hardware-gated,
+  not part of the suite.
 
 ## 9d. Whole-disk entropy heatmap (Wave 5F)
 
@@ -287,9 +293,9 @@ section-copy loop.
   table and every raw-data range with 64-bit bounds arithmetic, and maps it at
   `PE_BASE 0x400000` / `PE_MAPSZ 0x140000` with `MAP_FIXED_NOREPLACE`. A second
   concurrent image or an already-occupied base fails cleanly. `path` may be
-  NULL/empty, in which case `CBM_PE_PATH` or `/tmp/opencode/ap.exe` is used;
-  `tea_init` passes only an explicit, validated path so PE mode never silently
-  falls back.
+  NULL/empty, in which case `CBM_PE_PATH` is used — there is no built-in
+  default path. `tea_init` passes only an explicit, validated path so PE mode
+  never silently falls back.
 - `pe_rva_to_va(img, rva)` resolves an RVA within the declared image size.
 - `pe_call_void(img, rva_or_va, arg, n)` packs `n` bytes (1-3 `uint32_t`
   words, 4-12 bytes) into `args[0..2]`, zero-fills missing words, zeroes the
@@ -302,8 +308,10 @@ section-copy loop.
 - `pe_unload(img)` munmaps the image and clears the singleton; it tolerates
   NULL and double unload. `tea_cleanup()` calls it once.
 - `pe-call <pe-path> <rva|export-name> <hex-args>` exposes the same API from
-  the shell. `test_pelib` (19/19) covers loader failures, golden encrypt
-  `e66254b5da09fb31`, decrypt roundtrip and IAT hook dispatch.
+  the shell. `test_pelib` (21 passes with PE; separately formatted
+  `test_pelib: 10 passed, 0 failed` without a usable PE) covers loader
+  failures, golden encrypt `e66254b5da09fb31`, decrypt roundtrip and IAT
+  hook dispatch.
 
 ## Data flow (device validation)
 
@@ -322,6 +330,8 @@ section-copy loop.
 
 `CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`; the `cbm-tool` target also
 links `-lz`. Produces `cbm-tool`, the `pe-call` CLI, nineteen test binaries
-and one shell CLI suite. All 162 checks pass across twenty suites (the eighteen
-prior plus `test_cbm_doctor` and `test_cbm_tui`); the observed full verification
-log has 20 `Results:` lines and 179 `TEST:` lines with 0 failures.
+and one shell CLI suite. Measured at HEAD `0ad881d`: 178 passed, 0 failed,
+0 skipped with PE, and 172 passed, 0 failed, 4 skipped without a usable PE,
+each across 20 `Results:` lines (plus a separately formatted `test_pelib`
+line: 21 / 10 passes). Counts are from `/tmp/opencode/nohl-final-with-pe.log`
+and `/tmp/opencode/nohl-final-without-pe.log`; see [GAPS.md](GAPS.md).

@@ -35,10 +35,14 @@ The vendor `ap.exe` encrypts an 8-byte zero block with the key at VA
 at the scratch buffer, word 1 is the length, word 2 is the key address:
 
 ```
-$ pe-call /tmp/opencode/ap.exe 0x59da0 000160000800000024c94f00
+$ pe-call /path/to/your/legally-obtained/ap.exe 0x59da0 000160000800000024c94f00
 args: 000160000800000024c94f00
 buffer@0x00600100: e66254b5da09fb310000...   # shortened; 64 bytes printed
 ```
+
+`<pe-path>` is always explicit: there is no default vendor path and no vendor
+binary in this repo. The same user-supplied path can be passed to the tool's
+opt-in `--pe-crypto` backend through `CBM_PE_PATH`.
 
 The same target also works as `0x459da0`. Decrypt at RVA `0x59d50` with the
 ciphertext bytes written into the scratch buffer returns zeros.

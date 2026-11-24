@@ -1,6 +1,6 @@
 # nx-cbm-lab
 
-Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 162 passing checks, no vendor binary, honest gaps.
+Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 178 passing checks, no vendor binary, honest gaps.
 
 ## What this is
 
@@ -9,7 +9,8 @@ container format used by the vendor APTool (`ap.exe`), and validates the
 resulting host-side path against a real Chipsbank USB mass-storage device.
 
 It does **not** redistribute any vendor binary and does **not** claim full
-protocol parity. See [GAPS.md](GAPS.md) for the four honest gaps.
+protocol parity. See [GAPS.md](GAPS.md) for the five honest gaps and their
+exact closure gates.
 
 ## Working, verified
 
@@ -71,28 +72,32 @@ modes, in any position:
     ./cbm-tool --pe-crypto container container.bin
     ./cbm-tool container container.bin --pe-crypto --output container.reenc
 
-`CBM_PE_PATH` overrides the PE location (default `/tmp/opencode/ap.exe`); the
-native backend ignores it. In PE mode the tool runs `tea_native_selfcheck()`
-before init and prints `PE self-check: PASS (native byte-identical to PE)`
-when the clean-room cipher matches the vendor oracle. See
-[ARCHITECTURE.md](ARCHITECTURE.md) §9 for the recovered tables, flag
-sequences and golden vectors.
+`CBM_PE_PATH` is the only source of the PE path — there is no built-in default
+and no silent fallback; `--pe-crypto` without it fails with an explicit error.
+The native backend ignores it. The PE-dependent cases in `test_tea`,
+`test_tea_native`, `test_pelib` and `test_cbm` also read `CBM_PE_PATH` and skip
+when no usable PE is supplied. In PE mode the tool runs
+`tea_native_selfcheck()` before init and prints
+`PE self-check: PASS (native byte-identical to PE)` when the clean-room cipher
+matches the vendor oracle. See [ARCHITECTURE.md](ARCHITECTURE.md) §9 for the
+recovered tables, flag sequences and golden vectors.
 
 ## Build
 
     make clean && make && make test
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
-with 32-bit zlib-ng 1.3.1). Observed on this tree (2026-11-24) with the full
-chain `make clean && make && make test && sh test_backend_cli.sh`: **162 passing
-checks across 20 `Results:` lines / 179 `TEST:` lines, 0 failures**.
+with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `0ad881d`, 2026-11-24)
+with the full chain `make clean && make && make test && sh test_backend_cli.sh`:
+**178 passed, 0 failed, 0 skipped** with PE and **172 passed, 0 failed,
+4 skipped** with no usable PE, each across 20 `Results:` lines. The separately
+formatted `test_pelib` line reports 21 passes with PE and 10 without; those
+counts are outside the `Results:` sums. Both runs exited 0 (`cli_exit=0`,
+`build_exit=0`, `make_test_exit=0`).
 
-Count history (honest, from the logs only): the earlier 126 figure was not
-reproducible from the test logs — the 5F log sums to 111. The 131 figure was
-the observed sum across 20 suites after Wave 5D (+3 layout, +12 doctor, +5 TUI).
-The current 162 is the controller-verified 142 plus 7 new doctor checks,
-11 new TUI checks and 1 new shell CLI check counted twice (inside `make test`
-and the explicit run).
+Provenance: `/tmp/opencode/nohl-final-with-pe.log` and
+`/tmp/opencode/nohl-final-without-pe.log`. No real device is touched; every
+fixture is a synthetic regular file.
 
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
@@ -156,7 +161,7 @@ explicit **inferred** markers — the field map is deliberately incomplete.
 ## Read-only forensic scan
 
     ./cbm-tool scan <device-or-image> [--start LBA] [--end LBA] [--chunk MiB]
-                    [--carve <dir>] [--json <report.json>]
+                    [--carve <dir>] [--json <report.json>] [--all-hits]
 
 `scan` sweeps an inclusive LBA range (512 bytes/LBA; `--start` defaults to 0,
 `--end` to the last LBA, `--chunk` to 8 MiB with a 1 MiB minimum) in chunks
@@ -175,11 +180,15 @@ Detection uses the **structural probe** only: no magic list is supplied. No
 magic value is known for this format (`docs/container-format.md`), so
 `cbmv1001` and similar strings are **UNVERIFIED** and advisory at most. Hits
 are **CANDIDATES, not confirmed containers**, and false positives/negatives
-are possible: the scanner only probes 512-byte-aligned starts, and the
-duplicate-hit suppression cannot report two genuinely distinct containers
-whose starts are less than `CBM_CONTAINER_SIZE` (85688) bytes apart.
-Real-device scanning remains a hardware-gated step, not part of the automated
-suite; the tests use synthetic images only.
+are possible: the scanner only probes 512-byte-aligned starts. By default a
+cluster of hits closer than one container (`CBM_CONTAINER_SIZE`, 85688 bytes)
+is collapsed to its lowest offset; the opt-in `--all-hits` flag (scan-only,
+after the image path) keeps **every** candidate, so two genuinely distinct
+containers less than 85688 bytes apart can both be reported. That closes the
+cluster-suppression limitation, not confirmation: a recovered magic/header
+schema (Gap 4) and a real-container corpus are still required. Real-device
+scanning remains a hardware-gated step, not part of the automated suite; the
+tests use synthetic images only.
 
 ## Read-only entropy heatmap
 
@@ -298,13 +307,16 @@ Neither is a runtime dependency of the default native backend. See
 
 This repository contains **no vendor binary**. The default build and all
 normal modes run the pure-C cipher and need no `ap.exe` at all. The optional
-`--pe-crypto` backend and the PE-oracle equivalence test do need one: supply
-your own legally-obtained copy of APTool (`ap.exe`) at
-`/tmp/opencode/ap.exe`, or set `CBM_PE_PATH=/path/to/ap.exe`. The harness
-loads it at runtime; it is never committed.
-The PE-oracle equivalence test in `test_tea_native` reads the default path
-`/tmp/opencode/ap.exe` only and does not honour `CBM_PE_PATH`; setting
-`CBM_PE_PATH` relocates the tool's `--pe-crypto` backend only.
+`--pe-crypto` backend and the PE-oracle equivalence tests do need one: supply
+your own legally-obtained copy of APTool (`ap.exe`) via
+`CBM_PE_PATH=/path/to/your/ap.exe` (or as an explicit `pe-call` argument).
+There is no default path: `--pe-crypto` without `CBM_PE_PATH` fails with an
+explicit error, and the harness loads the PE at runtime without ever
+committing it.
+The PE-dependent cases in `test_tea`, `test_tea_native`, `test_pelib` and
+`test_cbm` read the same `CBM_PE_PATH` and skip when no usable PE is supplied;
+the no-PE run therefore reports 4 skipped in the `Results:` sums and a lower
+`test_pelib` count. No vendor file is moved, renamed or deleted.
 
 ## License
 

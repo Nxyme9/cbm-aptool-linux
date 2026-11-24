@@ -20,8 +20,9 @@ The loader lives in `pelib.{h,c}`, not in `tea_crypto.c`. Constants:
 
 `pe_load(&img, path, hooks)` performs all the steps that were once inline:
 
-1. Read the PE file into a buffer (`CBM_PE_PATH` override, default
-   `/tmp/opencode/ap.exe` when the caller passes NULL/empty).
+1. Read the caller-supplied PE file into a buffer. When `path` is NULL/empty,
+   `pe_load` uses `CBM_PE_PATH` only; there is no built-in default path and
+   no silent fallback.
 2. Validate DOS magic, `e_lfanew`, PE signature, section count, optional-header
    size and every section's raw range with 64-bit bounds arithmetic; check the
    declared ImageBase is `0x400000`.
@@ -71,8 +72,9 @@ cipher before any C port was written.
 ## Requirements
 
 - 32-bit toolchain: `gcc -m32` (needs `libc6-dev-i386` / multilib).
-- PE must be present at the configured path (default
-  `/tmp/opencode/ap.exe`, overridable via `CBM_PE_PATH`).
+- PE is optional: for the opt-in PE backend or PE tests, supply a legally
+  obtained PE explicitly via `CBM_PE_PATH` (or as an explicit `pe-call`
+  argument). There is no default path. All normal modes need no PE at all.
 - PE's `ImageBase` must be `0x400000` (no relocations are applied).
 
 ## Limitations
@@ -84,5 +86,7 @@ cipher before any C port was written.
   matching `pe_import_hook_t` stubs; no Windows library is loaded or invoked.
 - ASLR is not handled (irrelevant for this fixed-base PE).
 - The PE binary itself is never committed or published.
-- `test_pelib` (19/19) and `pe-call` exercise the library directly, including
-  the golden TEA vector `e66254b5da09fb31` and IAT hook dispatch.
+- `test_pelib` (21 passes with PE; separately formatted `test_pelib: 10
+  passed, 0 failed` without a usable PE) and `pe-call` exercise the library
+  directly, including the golden TEA vector `e66254b5da09fb31` and IAT hook
+  dispatch. No vendor binary is needed for the non-PE cases.

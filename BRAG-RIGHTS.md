@@ -15,7 +15,7 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 | # | Idea | What it proves | Effort |
 |---|---|---|---|
 | 5A | **Clean-room TEA** | Reimplement the vendor cipher in pure C, byte-identical to the PE oracle. Tool runs with **zero** `ap.exe`. | S |
-| 5B | **Forensic scanner** | Shipped in Wave 5B: read-only structural sweep, carve + deterministic JSON report. Magic (`cbmv1001`) is **UNVERIFIED**; hits are candidates, and distinct containers < 85688 bytes apart cannot both be reported. | S |
+| 5B | **Forensic scanner** | Shipped in Wave 5B: read-only structural sweep, carve + deterministic JSON report. Magic (`cbmv1001`) is **UNVERIFIED**; hits are candidates. Opt-in `--all-hits` reports close distinct containers; confirmation still needs a magic/schema oracle. | S |
 | 5C | **Decoder + fuzz lab** | `diff` two containers, seeded mutation fuzzing, and an honest field map of the undocumented format. Shipped in Wave 5C: `docs/container-format.md` marks interpretations **inferred**. | M |
 | 5D | **Doctor + live TUI** | Repair corrupted MBR/DJ layout behind `--repair-mbr --yes --backup`, plus a terminal dashboard. | M |
 
@@ -64,9 +64,9 @@ Effort: **S** = days, **M** = weeks, **L** = research-grade.
 
 ## Honest boundaries (keep these in every claim)
 
-- Vendor SCSI CDB set (Gap 1), `CBMUsbDisk.dll` internals (Gap 2), NAND ECC/erase policy (Gap 3) and the container body field map (Gap 4) are **still open**. Several ideas above attack them; none claim them solved.
+- Vendor SCSI CDB set (Gap 1), `CBMUsbDisk.dll` internals (Gap 2), NAND ECC/erase policy (Gap 3), the container body field map (Gap 4) and container confirmation (Gap 5) are **still open** (Gap 2's practical crypto need and Gap 4's outer layer are closed; Gap 5's close-hit limitation is mitigated by `--all-hits`). Several ideas above attack them; none claim them solved.
 - No vendor binary, key leak, or device serial is committed. Keys are allowlisted, serials redacted.
 - All write paths are opt-in with read-back verification; scans are read-only.
 - Hardware-dependent ideas (5E gadget board, 5L firmware dump, 5O RP2040) are gated on hardware we haven't confirmed owning.
 
-Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current: 162 passing checks across 20 `Results:` lines / 179 `TEST:` lines, MIT. The doctor repair path needs `--repair-mbr --yes --backup`; the TUI is read-only by construction.
+Full designs: `docs/superpowers/specs/`. At program start (5957179): 40/40 tests. Current (measured at `0ad881d`): 178 passed, 0 failed, 0 skipped with PE / 172 passed, 0 failed, 4 skipped without a usable PE, each across 20 `Results:` lines (plus a separately formatted `test_pelib` line: 21 / 10 passed), MIT. The doctor repair path needs `--repair-mbr --yes --backup`; the TUI is read-only by construction.
