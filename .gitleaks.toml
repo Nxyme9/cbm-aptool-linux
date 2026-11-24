@@ -1,0 +1,14 @@
+# gitleaks configuration
+#
+# The TEA cipher key "1a2b3c4d5e6fTENG" is a published reverse-engineering
+# artifact extracted from the vendor PE (ap.exe) by the mmap-at-ImageBase
+# harness. It is a cipher key, not a service credential, and is disclosed
+# intentionally in README.md / ARCHITECTURE.md / tea_crypto.{h,c} / tests
+# as part of the protocol documentation. gitleaks flags it as a
+# "generic-api-key" false positive.
+
+[allowlist]
+  description = "TEA cipher key is a published RE artifact, not a secret"
+  regexes = [
+    '''1a2b3c4d5e6fTENG''',
+  ]
