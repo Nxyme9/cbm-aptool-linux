@@ -7,12 +7,13 @@ CFLAGS = -m32 -Wall -Wextra -O2 -g
 LDFLAGS = -m32
 
 TARGET = cbm-tool
+CLI = pe-call
 TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib
 
 # PE path overridable via CBM_PE_PATH env var; defaults to the APTool location.
 PE ?= /tmp/opencode/ap.exe
 
-all: $(TARGET) $(TESTS)
+all: $(TARGET) $(CLI) $(TESTS)
 
 $(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c
 	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c cbm_container.c cbm_file.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c $(LDFLAGS)
@@ -47,6 +48,9 @@ test_cbm_inspect: test_cbm_inspect.c cbm_inspect.c
 test_pelib: test_pelib.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_pelib.c pelib.c $(LDFLAGS)
 
+pe-call: pe-call.c pelib.c pelib.h
+	$(CC) $(CFLAGS) -o $@ pe-call.c pelib.c $(LDFLAGS)
+
 test: $(TESTS) $(TARGET)
 	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && sh ./test_backend_cli.sh
 
@@ -55,6 +59,6 @@ test-cli: $(TARGET)
 	sh ./test_backend_cli.sh
 
 clean:
-	rm -f $(TARGET) $(TESTS) *.o
+	rm -f $(TARGET) $(CLI) $(TESTS) *.o
 
 .PHONY: all test test-cli clean

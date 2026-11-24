@@ -20,6 +20,9 @@
 #define FAKE_SIZE 512u
 #define FAKE_PEOFF 0x80u
 #define FAKE_OPT 224u
+#define DECRYPT_RVA 0x59d50u         /* VA 0x459d50 - ImageBase */
+#define TEA_KEY "1a2b3c4d5e6fTENG"   /* allowlisted in .gitleaks.toml */
+#define HOOK_IAT_RVA 0xf6068u        /* COMDLG32.dll!GetFileTitleA in ap.exe */
 
 static int tests_passed = 0;
 static int tests_failed = 0;
@@ -104,6 +107,17 @@ static const char *real_pe_path(void) {
 }
 
 static void hook_noop(void) { }
+
+/* Real stdcall stub: the patched IAT slot is invoked with three words, so
+ * the callee must clean those three words. Captures arguments for assertions. */
+static int g_hook_calls;
+static uint32_t g_hook_w[3];
+static void __attribute__((stdcall)) hook_stub(uint32_t a, uint32_t b, uint32_t c) {
+    g_hook_calls++;
+    g_hook_w[0] = a;
+    g_hook_w[1] = b;
+    g_hook_w[2] = c;
+}
 
 static void test_hooks_accepted(void) {
     pe_import_hook_t hooks[3];
@@ -297,6 +311,175 @@ static void test_base_already_mapped(void) {
 }
 #endif
 
+/* ---- Task 2: generic call API, exports, hook dispatch ---- */
+
+static void dump_hex(const unsigned char *p, size_t n) {
+    size_t i;
+    for (i = 0; i < n; i++) printf("%02x", p[i]);
+}
+
+static void test_golden_encrypt_via_pelib(void) {
+    pe_image_t *img = NULL;
+    unsigned char block[8] = {0};
+    const char *key = TEA_KEY;
+    uint32_t args[3];
+    static const unsigned char want[8] = {
+        0xe6, 0x62, 0x54, 0xb5, 0xda, 0x09, 0xfb, 0x31
+    };
+
+    TEST("golden TEA encrypt via pe_call_void");
+    if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
+        FAIL("pe_load failed"); return;
+    }
+    args[0] = (uint32_t)(uintptr_t)block;
+    args[1] = 8u;
+    args[2] = (uint32_t)(uintptr_t)key;
+
+    if (pe_call_void(NULL, ENCRYPT_RVA, args, sizeof args) == 0) {
+        FAIL("NULL image accepted"); pe_unload(img); return;
+    }
+    if (pe_call_void(img, ENCRYPT_RVA, args, 13) == 0) {
+        FAIL("n > 12 accepted"); pe_unload(img); return;
+    }
+    if (pe_call_void(img, ENCRYPT_RVA, args, 5) == 0) {
+        FAIL("n % 4 != 0 accepted"); pe_unload(img); return;
+    }
+    if (pe_call_void(img, ENCRYPT_RVA, args, sizeof args) != 0) {
+        FAIL("pe_call_void failed"); pe_unload(img); return;
+    }
+    if (memcmp(block, want, sizeof want) != 0) {
+        printf("got "); dump_hex(block, sizeof block); printf(" ");
+        FAIL("ciphertext mismatch"); pe_unload(img); return;
+    }
+    /* The same VA must work as well as the RVA. */
+    memset(block, 0, sizeof block);
+    if (pe_call_void(img, BASE + ENCRYPT_RVA, args, sizeof args) != 0 ||
+        memcmp(block, want, sizeof want) != 0) {
+        FAIL("VA form of target failed"); pe_unload(img); return;
+    }
+    PASS();
+    pe_unload(img);
+}
+
+static void test_golden_decrypt_roundtrip(void) {
+    pe_image_t *img = NULL;
+    unsigned char block[8] = {0xe6, 0x62, 0x54, 0xb5, 0xda, 0x09, 0xfb, 0x31};
+    const unsigned char zeros[8] = {0};
+    const char *key = TEA_KEY;
+    uint32_t args[3];
+
+    TEST("golden TEA decrypt roundtrip via pe_call_void");
+    if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
+        FAIL("pe_load failed"); return;
+    }
+    args[0] = (uint32_t)(uintptr_t)block;
+    args[1] = 8u;
+    args[2] = (uint32_t)(uintptr_t)key;
+    if (pe_call_void(img, DECRYPT_RVA, args, sizeof args) != 0) {
+        FAIL("pe_call_void(decrypt) failed"); pe_unload(img); return;
+    }
+    if (memcmp(block, zeros, sizeof zeros) != 0) {
+        printf("got "); dump_hex(block, sizeof block); printf(" ");
+        FAIL("decrypt did not roundtrip to zeros"); pe_unload(img); return;
+    }
+    PASS();
+    pe_unload(img);
+}
+
+static void test_export_lookup(void) {
+    pe_image_t *img = NULL;
+    uint32_t rva = 0xdeadbeefu;
+    unsigned char buf[1024];
+    size_t opt = FAKE_PEOFF + 24u, sh = opt + FAKE_OPT;
+
+    TEST("export lookup: clean not-found + synthetic export resolved");
+    if (pe_load(&img, real_pe_path(), NULL) != 0 || !img) {
+        FAIL("real pe_load failed"); return;
+    }
+    if (pe_export(img, "NoSuchExport_5G", &rva) == 0 || rva != 0) {
+        FAIL("bogus export accepted on vendor PE"); pe_unload(img); return;
+    }
+    if (pe_export(img, NULL, &rva) == 0) {
+        FAIL("NULL export name accepted"); pe_unload(img); return;
+    }
+    pe_unload(img);
+
+    /* ap.exe has no export directory, so also exercise the found path with
+     * a tiny scratch PE (never written to the repo). */
+    make_pe(buf, sizeof buf, FAKE_PEOFF, 1, FAKE_OPT);
+    memcpy(buf + sh, ".text\0\0\0", 8);
+    put32(buf, sh + 8, 0x400u);        /* VirtualSize */
+    put32(buf, sh + 12, 0x1000u);      /* VirtualAddress */
+    put32(buf, sh + 16, 0x200u);       /* SizeOfRawData */
+    put32(buf, sh + 20, 0x200u);       /* PointerToRawData */
+    put32(buf, opt + 56, 0x2000u);     /* SizeOfImage */
+    put32(buf, opt + 92, 16u);         /* NumberOfRvaAndSizes */
+    put32(buf, opt + 96, 0x1000u);     /* export directory RVA */
+    put32(buf, opt + 100, 40u);        /* export directory size */
+    /* The 40-byte export directory itself occupies file 0x200..0x227, so
+     * EAT/ENT/ordinal tables must start after it, not inside it. */
+    put32(buf, 0x200 + 12, 0x1050u);   /* export Name RVA */
+    put32(buf, 0x200 + 16, 1u);        /* Base */
+    put32(buf, 0x200 + 20, 1u);        /* NumberOfFunctions */
+    put32(buf, 0x200 + 24, 1u);        /* NumberOfNames */
+    put32(buf, 0x200 + 28, 0x1030u);   /* AddressOfFunctions */
+    put32(buf, 0x200 + 32, 0x1034u);   /* AddressOfNames */
+    put32(buf, 0x200 + 36, 0x1038u);   /* AddressOfNameOrdinals */
+    put32(buf, 0x230, 0x1500u);        /* EAT[0] */
+    put32(buf, 0x234, 0x1040u);        /* ENT[0] -> "MyExport" */
+    put16(buf, 0x238, 0u);             /* ordinal[0] */
+    memcpy(buf + 0x240, "MyExport", 9);
+    memcpy(buf + 0x250, "synthetic.dll", 14);
+
+    if (load_bytes(&img, buf, sizeof buf) != 0 || !img) {
+        FAIL("synthetic pe_load failed"); return;
+    }
+    rva = 0;
+    if (pe_export(img, "MyExport", &rva) != 0 || rva != 0x1500u) {
+        printf("rva=%08x ", rva);
+        FAIL("synthetic export not resolved"); pe_unload(img); return;
+    }
+    if (pe_export(img, "Missing", &rva) == 0 || rva != 0) {
+        FAIL("missing name accepted on synthetic PE"); pe_unload(img); return;
+    }
+    PASS();
+    pe_unload(img);
+}
+
+static void test_import_hook_dispatch(void) {
+    pe_image_t *img = NULL;
+    pe_import_hook_t hooks[2];
+    uint32_t *slot;
+    typedef void (__attribute__((stdcall)) *fn3_t)(uint32_t, uint32_t, uint32_t);
+
+    TEST("import hook patched into IAT and dispatched");
+    hooks[0].dll = "COMDLG32.dll";
+    hooks[0].name = "GetFileTitleA";
+    hooks[0].fn = (void (*)(void))(uintptr_t)hook_stub;
+    memset(&hooks[1], 0, sizeof hooks[1]);
+    if (pe_load(&img, real_pe_path(), hooks) != 0 || !img) {
+        FAIL("load with hook failed"); return;
+    }
+    slot = (uint32_t *)pe_rva_to_va(img, HOOK_IAT_RVA);
+    if (!slot) {
+        FAIL("hook IAT slot not mapped"); pe_unload(img); return;
+    }
+    if (*slot != (uint32_t)(uintptr_t)hook_stub) {
+        printf("slot=%08x stub=%08x ", *slot, (unsigned)(uintptr_t)hook_stub);
+        FAIL("IAT slot not patched to stub"); pe_unload(img); return;
+    }
+    g_hook_calls = 0;
+    g_hook_w[0] = g_hook_w[1] = g_hook_w[2] = 0;
+    ((fn3_t)(void *)(uintptr_t)*slot)(0x11223344u, 0x55667788u, 0x99aabbccu);
+    if (g_hook_calls != 1 || g_hook_w[0] != 0x11223344u ||
+        g_hook_w[1] != 0x55667788u || g_hook_w[2] != 0x99aabbccu) {
+        FAIL("hook stub not dispatched through IAT with args");
+        pe_unload(img); return;
+    }
+    PASS();
+    pe_unload(img);
+}
+
 int main(void) {
     test_load_real_pe();
     test_bad_magic();
@@ -311,6 +494,10 @@ int main(void) {
     test_rva_out_of_range();
     test_hooks_accepted();
     test_hook_scan_bounded();
+    test_golden_encrypt_via_pelib();
+    test_golden_decrypt_roundtrip();
+    test_export_lookup();
+    test_import_hook_dispatch();
 #ifndef __SANITIZE_ADDRESS__
     test_base_already_mapped();
 #endif
