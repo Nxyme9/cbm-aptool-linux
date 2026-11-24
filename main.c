@@ -519,7 +519,7 @@ out:
 static void print_diff_usage(const char *prog) {
     fprintf(stderr,
         "Usage: %s diff <a.plain> <b.plain> [--context N]\n"
-        "  --context N   merge spans separated by <= N bytes (default 0)\n",
+        "  --context N   merge spans separated by <= N bytes (default 3)\n",
         prog);
 }
 
@@ -552,7 +552,7 @@ static void print_body_entropy(const char *label, double value) {
 static int diff_mode(int argc, char **argv) {
     const char *a_path = (argc >= 3) ? argv[2] : NULL;
     const char *b_path = (argc >= 4) ? argv[3] : NULL;
-    long long ctx = 0;
+    long long ctx = 3;
 
     if (!a_path || !b_path) {
         fprintf(stderr, "Error: diff requires two plain body files\n");

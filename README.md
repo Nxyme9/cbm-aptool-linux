@@ -44,6 +44,8 @@ protocol parity. See [GAPS.md](GAPS.md) for the four honest gaps.
 2. CBMUsbDisk.dll decryption (0/16 candidate keys yielded a valid PE) — no
    longer blocks normal use; the TEA core is native and PE-free.
 3. BCH ECC / balanced erase (firmware-internal; host evidence only).
+4. Container body field map beyond byte 0 — still incomplete; see Gap 4 in
+   [GAPS.md](GAPS.md) and [docs/container-format.md](docs/container-format.md).
 
 ## Crypto backends
 
@@ -128,7 +130,7 @@ encryption flag or the container size.
 `diff` reads two already-decrypted 85687-byte bodies (use
 `container ... --dump-plain`) and prints merged changed ranges, a changed-byte
 count, entropy for each side plus a signed delta, and a printable-density
-heatmap. `--context N` merges spans separated by at most N bytes (default 0).
+heatmap. `--context N` merges spans separated by at most N bytes (default 3).
 Swapping the two files yields the same ranges.
 
 `fuzz` is an offline mutation lab: it decrypts one 85688-byte container,
