@@ -4,7 +4,9 @@
  * Neither writer opens the scanned image for writing. JSON output is an
  * ordered array, one object per hit, with locale-independent numbers; carve
  * output is one exact-size file per hit under an explicitly supplied
- * directory. Both refuse any output path that resolves to the source image.
+ * directory. cbm_scan_carve refuses any output path that resolves to the
+ * source image; cbm_scan_write_json has no source to compare and relies on
+ * its caller (the scan CLI pre-flight) to reject such a path.
  */
 #ifndef CBM_SCAN_REPORT_H
 #define CBM_SCAN_REPORT_H

@@ -60,8 +60,8 @@ size_t cbm_scan_buffer(const unsigned char *buf, size_t len,
  * returns 0, sets *out to a malloc'd ascending-offset hit array and *out_count
  * to its length (caller frees with cbm_scan_free_hits). Returns -1 on error
  * with a message in err when err/errlen are non-zero. chunk_bytes must exceed
- * one container. Uses cbm_file_read only (regular files and block devices),
- * never cbm_file_write. */
+ * the 171888-byte overlap (two containers plus one LBA). Uses cbm_file_read
+ * only (regular files and block devices), never cbm_file_write. */
 int cbm_scan_image(const char *path, unsigned long long start_byte,
                    unsigned long long end_byte, size_t chunk_bytes,
                    const char *const *magics, size_t nmagic,

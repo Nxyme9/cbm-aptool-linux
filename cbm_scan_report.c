@@ -250,6 +250,7 @@ int cbm_scan_carve(const char *dir, const char *source,
         int bad = (put != CBM_CONTAINER_SIZE || fflush(f) != 0);
         if (fclose(f) != 0) bad = 1;
         if (bad) {
+            remove(outpath); /* no truncated carve artifact on failure */
             seterr(err, errlen, "failed to write carve file '%s'", outpath);
             goto out;
         }

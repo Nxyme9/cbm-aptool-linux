@@ -88,7 +88,7 @@ layout 5, nand 3, cbm_file 5, cbm_inspect 9, pelib 19, decode 11,
 backend_cli 4, diff 11, fuzz 5, scan 10, scan_report 4). The four 5A
 PE-dependent cases (`tea_native` PE oracle, `test_tea` PE dispatch and the two
 `test_backend_cli.sh` PE runs) skip (not fail) when no PE is supplied; eleven
-`test_pelib` cases need the vendor PE and fail without it. The remaining 88
+`test_pelib` cases need the vendor PE and fail without it. The remaining 98
 checks need no vendor binary.
 
 ## Device validation
