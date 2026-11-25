@@ -98,6 +98,7 @@ pe-call: pe-call.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ pe-call.c pelib.c $(LDFLAGS)
 
 test: $(TESTS) $(TARGET)
+	@mkdir -p /tmp/opencode
 	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS)
 
 test-mcp: $(TARGET)
