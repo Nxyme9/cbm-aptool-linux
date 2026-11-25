@@ -65,7 +65,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib zlib1g-dev
+          # libFuzzer links the C++ runtime; -m32 needs the 32-bit libstdc++.
+          sudo apt-get install -y gcc-multilib g++-multilib zlib1g-dev
       - name: Short fuzz smoke run
         run: make fuzz FUZZ_SECONDS=60
 

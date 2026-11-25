@@ -7,6 +7,7 @@
  * computed by zlib crc32 over type+data from crc32(0L, Z_NULL, 0).
  */
 #include <limits.h>
+#include <stdint.h> /* SIZE_MAX: not provided by <limits.h> on all libcs */
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
