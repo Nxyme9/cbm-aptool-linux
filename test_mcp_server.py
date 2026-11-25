@@ -19,7 +19,16 @@ from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import mcp_cbm_server as server  # noqa: E402
+try:
+    import mcp_cbm_server as server  # noqa: E402
+except ModuleNotFoundError as exc:
+    # Environment gate: the server module imports the Python mcp SDK. CI
+    # installs it into a venv (see .github/workflows/ci.yml); a machine without
+    # it reports a skip rather than a failure the code did not cause.
+    if (exc.name or "").split(".")[0] != "mcp":
+        raise
+    print(f"SKIP: Python mcp SDK not installed ({exc}); install 'mcp' to run these tests")
+    raise SystemExit(0)
 
 EXPECTED_TOOLS = {
     "cbm_container_info", "cbm_container_dump", "cbm_container_diff",

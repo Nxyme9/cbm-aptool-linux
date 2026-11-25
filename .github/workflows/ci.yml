@@ -16,7 +16,9 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib zlib1g-dev
+          # -m32 links need the 32-bit zlib dev files (lib32z1-dev), not just
+          # the native zlib1g-dev. python3-venv hosts the mcp SDK test below.
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev python3-venv
       - name: Build and test (fail on any warning)
         run: |
           set -o pipefail
@@ -26,6 +28,13 @@ jobs:
             exit 1
           fi
           make test
+      - name: MCP server tests (Python mcp SDK)
+        # test_mcp_server.py skips when the SDK is absent, so this step installs
+        # the pinned SDK into a venv and runs the suite for real.
+        run: |
+          python3 -m venv /tmp/mcpvenv
+          /tmp/mcpvenv/bin/pip install --quiet "mcp==2.3.0"
+          /tmp/mcpvenv/bin/python test_mcp_server.py
 
   build-clang:
     runs-on: ubuntu-latest
@@ -34,7 +43,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib zlib1g-dev
+          # -m32 links need the 32-bit zlib dev files (lib32z1-dev).
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev
       - name: Build and test with clang (-Werror)
         env:
           CLANG_CFLAGS: "-m32 -O2 -g -Wall -Wextra -Werror -Wformat=2 -Werror=format-security -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wvla -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2"
@@ -54,7 +64,8 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-multilib zlib1g-dev
+          # -m32 links need the 32-bit zlib dev files (lib32z1-dev).
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev
       - name: AddressSanitizer suite
         run: make asan
 
