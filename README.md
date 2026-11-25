@@ -116,6 +116,8 @@ is required.
 
 Wave 5H adds a local-only browser playground in [`wasm/`](wasm/) (static C API compiled to wasm32, hand-written HTML/JS, no server or install). Its build command, the 256 KiB static-memory cap, the `emcc`-absent / `clang` + `wasm-ld` route, and the exact Node test result are documented in [docs/wasm-playground.md](docs/wasm-playground.md); its suite is separate from the C suites above and does not change their measured pass counts.
 
+Wave 5J adds a read-only FUSE3 mount that exposes the RE artifacts as virtual files; its build command, per-file provenance, read-only guarantee, gated test and explicit out-of-scope list are documented in [docs/fuse-view.md](docs/fuse-view.md). It is a separate gated suite and does not change the measured C pass counts above.
+
 ## Device validation
 
     ./cbm-tool /dev/sdX

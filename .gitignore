@@ -43,6 +43,8 @@ test_png_write
 test_cbm_doctor
 test_cbm_tui
 pe-call
+# Wave 5J FUSE view (built by the documented command in docs/fuse-view.md)
+cbm-fuse
 # Phase 0 fuzz harness binaries (built by `make fuzz`)
 fuzz_tea
 fuzz_container
