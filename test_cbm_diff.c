@@ -338,7 +338,7 @@ static void test_print_locale_independent(void) {
     if (!chosen) {
         setlocale(LC_NUMERIC, saved);
         free(saved);
-        FAIL("no comma-decimal locale installed (tried es_ES/de_DE/fr_FR)");
+        printf("SKIP: no comma-decimal locale installed (tried de_DE/es_ES/fr_FR)\n");
         return;
     }
     printf("[%s] ", chosen);

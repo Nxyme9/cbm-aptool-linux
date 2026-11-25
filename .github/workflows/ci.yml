@@ -18,7 +18,10 @@ jobs:
           sudo apt-get update
           # -m32 links need the 32-bit zlib dev files (lib32z1-dev), not just
           # the native zlib1g-dev. python3-venv hosts the mcp SDK test below.
-          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev python3-venv
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev python3-venv locales
+          # The diff/decode tests exercise LC_NUMERIC formatting with a
+          # comma-decimal locale, which a clean runner does not ship.
+          sudo locale-gen de_DE.UTF-8
       - name: Build and test (fail on any warning)
         run: |
           set -o pipefail
@@ -44,7 +47,10 @@ jobs:
         run: |
           sudo apt-get update
           # -m32 links need the 32-bit zlib dev files (lib32z1-dev).
-          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev locales
+          # The diff/decode tests exercise LC_NUMERIC formatting with a
+          # comma-decimal locale, which a clean runner does not ship.
+          sudo locale-gen de_DE.UTF-8
       - name: Build and test with clang (-Werror)
         env:
           CLANG_CFLAGS: "-m32 -O2 -g -Wall -Wextra -Werror -Wformat=2 -Werror=format-security -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Wvla -fstack-protector-strong -fstack-clash-protection -D_FORTIFY_SOURCE=2"
@@ -65,7 +71,10 @@ jobs:
         run: |
           sudo apt-get update
           # -m32 links need the 32-bit zlib dev files (lib32z1-dev).
-          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev
+          sudo apt-get install -y gcc-multilib zlib1g-dev lib32z1-dev locales
+          # The diff/decode tests exercise LC_NUMERIC formatting with a
+          # comma-decimal locale, which a clean runner does not ship.
+          sudo locale-gen de_DE.UTF-8
       - name: AddressSanitizer suite
         run: make asan
 
