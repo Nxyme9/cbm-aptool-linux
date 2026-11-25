@@ -333,7 +333,7 @@ section-copy loop.
 -D_FORTIFY_SOURCE=2` to `-m32 -O2 -g -Wall -Wextra`, and `LDFLAGS` adds
 `-Wl,-z,relro,-z,now`; the `cbm-tool` target also links `-lz`. Produces
 `cbm-tool`, the `pe-call` CLI, nineteen test binaries
-and one shell CLI suite. Measured at HEAD `1208cbd`: 187 passed, 0 failed,
+and one shell CLI suite. Measured at HEAD `e3e7d1a`: 187 passed, 0 failed,
 0 skipped with PE, and 181 passed, 0 failed, 4 skipped without a usable PE,
 each across 20 `Results:` lines (plus a separately formatted `test_pelib`
 line: 21 / 10 passes). Counts are from `/tmp/opencode/nohl-final-with-pe.log`

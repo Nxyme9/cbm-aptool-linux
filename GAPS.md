@@ -22,7 +22,7 @@ without evidence.
 
 ## Measured counts (scope)
 
-Measured on this tree at HEAD `1208cbd`, from two fresh logs under
+Measured on this tree at HEAD `e3e7d1a`, from two fresh logs under
 `/tmp/opencode/`:
 
 - `nohl-final-with-pe.log` (`CBM_PE_PATH` pointed at the user's own PE):
