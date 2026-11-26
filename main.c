@@ -26,6 +26,9 @@
  *   cbm-tool tui <device|image>
  *                            strictly read-only ANSI live view; q/ESC quits,
  *                            never opens the target for writing
+ *   cbm-tool cdb-capture <pe-path> --out <capture-file> [--export <name>]
+ *                            [--arg0 N] [--arg1 N] [--arg2 N]
+ *                            shimmed PE import capture; writes only --out
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +65,7 @@
 #include "cbm_doctor.h"
 #include "cbm_tui.h"
 #include "cli_json.h"
+#include "cdb_shim.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -1557,6 +1561,111 @@ done:
     return rc;
 }
 
+/* ---- wave 5E / G1-a: deterministic PE import capture ------------------- */
+
+static void print_cdb_capture_usage(const char *prog) {
+    fprintf(stderr,
+        "Usage: %s cdb-capture <pe-path> --out <capture-file> [--export <name>]\n"
+        "                        [--arg0 N] [--arg1 N] [--arg2 N]\n"
+        "  --out <file>    required capture file; devices/directories are refused\n"
+        "  --export <name> optional PE export called with three uint32 words\n"
+        "  Exit: 0 ok, 1 runtime error, 2 usage error.\n",
+        prog);
+}
+
+static int cdb_capture_mode(int argc, char **argv, FILE *json_out) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    const char *out = NULL;
+    const char *export = NULL;
+    uint32_t args[3] = {0u, 0u, 0u};
+    pe_image_t *img = NULL;
+    uint32_t rva = 0;
+    size_t events = 0;
+    int rc = 0, called = 0;
+
+    /* No implicit PE path: <pe-path> is mandatory and is never read from
+     * CBM_PE_PATH. A missing file is a usage error naming this argument. */
+    if (!path || !*path || path[0] == '-') {
+        fprintf(stderr, "Error: cdb-capture requires <pe-path>\n");
+        print_cdb_capture_usage(argv[0]);
+        return 2;
+    }
+    if (access(path, F_OK) != 0) {
+        fprintf(stderr, "Error: cdb-capture <pe-path> cannot access '%s'\n", path);
+        print_cdb_capture_usage(argv[0]);
+        return 2;
+    }
+    for (int i = 3; i < argc; i++) {
+        const char *a = argv[i];
+        if (strcmp(a, "--out") == 0 || strcmp(a, "--export") == 0) {
+            if (++i >= argc || !argv[i][0]) {
+                fprintf(stderr, "Error: %s needs a non-empty path\n", a);
+                print_cdb_capture_usage(argv[0]);
+                return 2;
+            }
+            if (strcmp(a, "--out") == 0) out = argv[i];
+            else export = argv[i];
+        } else if (strcmp(a, "--arg0") == 0 || strcmp(a, "--arg1") == 0 ||
+                   strcmp(a, "--arg2") == 0) {
+            unsigned long slot;
+            int idx = (a[6] == '0') ? 0 : (a[6] == '1') ? 1 : 2;
+            if (++i >= argc || parse_unsigned_arg(argv[i], &slot) != 0) {
+                fprintf(stderr, "Error: %s needs a non-negative integer\n", a);
+                print_cdb_capture_usage(argv[0]);
+                return 2;
+            }
+            args[idx] = (uint32_t)slot;
+        } else {
+            fprintf(stderr, "Error: unknown cdb-capture option '%s'\n", a);
+            print_cdb_capture_usage(argv[0]);
+            return 2;
+        }
+    }
+    if (!out || (export && !*export)) {
+        fprintf(stderr, "Error: cdb-capture requires --out <capture-file>\n");
+        print_cdb_capture_usage(argv[0]);
+        return 2;
+    }
+    if (cdb_capture_open(out) != 0) return 1;
+    if (pe_load(&img, path, cdb_shim_hooks()) != 0 || !img) {
+        fprintf(stderr, "Error: cdb-capture cannot load PE '%s'\n", path);
+        cdb_capture_close();
+        return 1;
+    }
+    if (export) {
+        if (pe_export(img, export, &rva) != 0) {
+            fprintf(stderr, "Error: cdb-capture --export '%s' not found in '%s'\n",
+                    export, path);
+            rc = 1;                  /* still close and publish the empty capture */
+        } else if (pe_call_void(img, rva, args, sizeof args) != 0) {
+            fprintf(stderr, "Error: cdb-capture --export '%s' call failed\n", export);
+            rc = 1;
+        } else {
+            called = 1;
+        }
+    }
+    events = cdb_capture_count();
+    pe_unload(img);
+    cdb_capture_close();              /* flush the header + every record */
+
+    if (json_out && rc == 0) {
+        cbm_json_t j;
+        cbm_json_object_begin(&j, json_out, "cdb-capture", "ok");
+        cbm_json_field_string(&j, "path", path);
+        cbm_json_field_string(&j, "capture", out);
+        cbm_json_field_string(&j, "export", export ? export : "");
+        cbm_json_field_bool(&j, "called", called);
+        cbm_json_field_u64(&j, "events", (unsigned long long)events);
+        cbm_json_end(&j);
+    } else if (!json_out) {
+        printf("CDB capture: %s\n", out);
+        printf("Events: %lu\n", (unsigned long)events);
+        printf("Export: %s (%s)\n", export ? export : "(none)",
+               called ? "called" : "not called");
+    }
+    return rc;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     const char *command = (argc >= 2) ? argv[1] : NULL;
@@ -1587,7 +1696,7 @@ int main(int argc, char **argv) {
      * not run the selftest first (that would init/cleanup TEA twice). diff and
      * heatmap are pure byte analysis and need no crypto at all. doctor/tui are
      * read-only diagnostics except the explicitly authorised repair path.
-     * All seven subcommands are dispatched before the device path so nothing
+     * All eight subcommands are dispatched before the device path so nothing
      * can be mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
         rc = container_mode(argc, argv, json_out);
@@ -1603,6 +1712,8 @@ int main(int argc, char **argv) {
         rc = cbm_doctor_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (argc >= 2 && strcmp(argv[1], "tui") == 0)
         rc = tui_mode(argc, argv);
+    else if (argc >= 2 && strcmp(argv[1], "cdb-capture") == 0)
+        rc = cdb_capture_mode(argc, argv, json_out);
     else if (selftest() != 0)
         rc = 1;
     else if (argc > 1)

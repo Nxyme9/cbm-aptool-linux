@@ -15,8 +15,8 @@ Success and error objects share a fixed prefix, in this order:
 ```
 
 - `schema` is always the literal string `cbm/1`.
-- `command` is the mode name: `container`, `diff`, `fuzz`, `scan`, `heatmap`
-  or `doctor`.
+- `command` is the mode name: `container`, `diff`, `fuzz`, `scan`, `heatmap`,
+  `doctor` or `cdb-capture`.
 - `status` is `ok` on success or `error` on failure.
 - An error object adds a single `"error"` string field. The string is the
   captured human error text with newlines/tabs collapsed to spaces.
@@ -51,8 +51,8 @@ starts with `-`. Both spellings may appear on one command line, in any order:
 ./cbm-tool scan disk.img --json report.json --json         # both
 ```
 
-`container`, `diff`, `fuzz` and `doctor` have no sidecar, so `--json` is always
-the bare flag in those modes. Note that the bare stdout object and the sidecar
+`container`, `diff`, `fuzz`, `doctor` and `cdb-capture` have no sidecar, so
+`--json` is always the bare flag in those modes. Note that the bare stdout object and the sidecar
 file are **different documents**: the sidecar keeps its original shape
 (`scan` writes an array of hits; `heatmap` writes an object with
 `block_bytes`/`samples`/`width`/`height`/`entropy`/`regions`), while the bare
@@ -75,6 +75,7 @@ may be added later, but existing names and types will not change.
 | `heatmap.regions[]` | `name` (string), `offset`, `length`, `samples` (numbers), `min`, `mean`, `max` (fixed-6 numbers), `inferred` (bool) |
 | `doctor` | `path` (string), `window_gib` (number), `mbr_valid` (bool), `partitions` (array), `repair_performed` (bool), `dry_run` (bool) |
 | `doctor.partitions[]` | `name` (string), `start_lba`, `sectors`, `type` (numbers), `inferred` (bool) |
+| `cdb-capture` | `path` (string, PE path), `capture` (string, output file), `export` (string, empty when absent), `called` (bool), `events` (number, capture records) |
 
 The JSON reports only what was measured. In `doctor`, `partitions` is parsed
 from the target's actual first sector; an unparsable sector yields `[]`, never
@@ -90,7 +91,9 @@ not exposed as another CLI command.
 
 ## Verification
 
-`test_json_cli.sh` builds synthetic fixtures under `/tmp/opencode` and checks
-all seven success modes, two error modes, and the scan/heatmap sidecar
-byte-for-byte behaviour using `python3 -c 'import json,sys; ...'`. It is part of
-`make test` / `make ci`. No device, hardware or vendor PE is involved.
+`test_json_cli.sh` builds synthetic fixtures under `/tmp/opencode` (including a
+tiny PE32 with one export for `cdb-capture`) and checks all eight success modes,
+four error modes, the missing-export empty-capture header, and the
+scan/heatmap sidecar byte-for-byte behaviour using
+`python3 -c 'import json,sys; ...'`. It is part of `make test` / `make ci`.
+No device, hardware or vendor PE is involved.

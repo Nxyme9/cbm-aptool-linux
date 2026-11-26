@@ -2,8 +2,8 @@
 
 Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks.
 Each subsystem maps to one source file; all are exercised by the unit suite
-(187 passed with PE / 181 passed with 4 skipped without a usable PE, across
-twenty `Results:` lines including CLI backend selection) and the real-device
+(194 passed with PE / 188 passed with 4 skipped without a usable PE, across
+twenty-one `Results:` lines including CLI backend selection) and the real-device
 validation mode (`cbm-tool <blockdev>`). See [GAPS.md](GAPS.md) for count scope.
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
@@ -105,9 +105,16 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   `st_dev`/`st_ino`) and write only to the explicit paths. JSON field order is
   `offset`, `header`, `entropy`, `sha256`, `tokens`; entropy is integer
   fixed-point with a literal `.`, so output is locale-independent.
+- `cbm-tool cdb-capture <pe-path> --out <capture-file> [--export <name>]
+  [--arg0 N] [--arg1 N] [--arg2 N]`: loads a PE with the wave 5E import shims
+  from `cdb_shim.{h,c}` and writes a deterministic control-code/input/CDB
+  capture; the PE path is mandatory here and never falls back to
+  `CBM_PE_PATH`. Writes only `--out`, never a device.
 - Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
-  → `diff` → `fuzz` → `scan` → no-args self-test → `verify_device(argv[1])`.
-  Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`.
+  → `diff` → `fuzz` → `scan` → `heatmap` → `doctor` → `tui` →
+  `cdb-capture` → no-args self-test → `verify_device(argv[1])`.
+  Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`/
+  `cdb-capture`.
 - PE path comes only from the `CBM_PE_PATH` env var (or an explicit argument
   to `pe-call`); there is no built-in default and no silent fallback.
   `--pe-crypto` without it fails with an explicit error. Only the opt-in PE
@@ -313,7 +320,33 @@ section-copy loop.
   failures, golden encrypt `e66254b5da09fb31`, decrypt roundtrip and IAT
   hook dispatch.
 
-## Data flow (device validation)
+## 10b. CDB capture shims (Wave 5E, `cdb_shim.{h,c}`)
+
+Software-only tier 1 of Gap 1: one fixed-base PE is loaded with an import hook
+table, and the shims write a deterministic text capture. No device node, USB
+gadget, vendor PE or vendor DLL participates in any test.
+
+- `cdb_capture_open(path)` refuses a directory, block or character device and a
+  second concurrent capture, then writes the header `cbm-cdb-capture/1` and
+  flushes every record as it ends. `cdb_capture_count()` counts those records.
+- `cdb_shim_hooks()` covers `kernel32.dll` `DeviceIoControl`, `CreateFileA`,
+  `CreateFileW` and `CloseHandle`; `cdb_shim_log_unknown()` records an import
+  with no dedicated shim as `event=<dll>!<name>`.
+- Every shim returns a synthetic Win32 success. `DeviceIoControl` zeroes
+  `*lpBytesReturned` and up to 512 output bytes, never modifies the input
+  buffer, and never touches a caller pointer when no capture is open.
+- Only `IOCTL_SCSI_PASS_THROUGH` (`0x0004D004`, `Cdb[]` at offset 24) and
+  `IOCTL_SCSI_PASS_THROUGH_DIRECT` (`0x0004D014`, `Cdb[]` at offset 28) decode
+  a CDB, bounded by `CdbLength` (offset 6), 16 bytes and the real buffer
+  length. Any other control code logs the raw input only.
+- `test_cdb_shim` builds a synthetic PE with one `DeviceIoControl` import,
+  calls the patched IAT slot, and compares the whole capture file byte for
+  byte (`2a 00 00 00 00 00`), plus unknown-control, truncation, NULL-pointer,
+  no-capture and `CreateFileA/W` escaping cases. `docs/cdb-table.md` is the
+  observed/not-observed table; its vendor column reads `not observed` because
+  G1-b (running the capture against the user's own PE) has not run.
+
+
 
     /dev/sdX
       -> usb_mass_open (BLKGETSIZE64 capacity)
@@ -332,9 +365,10 @@ section-copy loop.
 -Wmissing-prototypes -Wvla -fstack-protector-strong -fstack-clash-protection
 -D_FORTIFY_SOURCE=2` to `-m32 -O2 -g -Wall -Wextra`, and `LDFLAGS` adds
 `-Wl,-z,relro,-z,now`; the `cbm-tool` target also links `-lz`. Produces
-`cbm-tool`, the `pe-call` CLI, nineteen test binaries
-and one shell CLI suite. Measured at HEAD `e3e7d1a`: 187 passed, 0 failed,
-0 skipped with PE, and 181 passed, 0 failed, 4 skipped without a usable PE,
-each across 20 `Results:` lines (plus a separately formatted `test_pelib`
-line: 21 / 10 passes). Counts are from `/tmp/opencode/nohl-final-with-pe.log`
-and `/tmp/opencode/nohl-final-without-pe.log`; see [GAPS.md](GAPS.md).
+`cbm-tool`, the `pe-call` CLI, twenty test binaries
+and one shell CLI suite. Measured at HEAD `245119b` plus the wave 5E working
+tree: 194 passed, 0 failed, 0 skipped with PE, and 188 passed, 0 failed,
+4 skipped without a usable PE, each across 21 `Results:` lines (plus a
+separately formatted `test_pelib` line: 21 / 10 passes). Counts are from
+`/tmp/opencode/nohl-final-with-pe.log` and
+`/tmp/opencode/nohl-final-without-pe.log`; see [GAPS.md](GAPS.md).

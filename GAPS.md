@@ -22,24 +22,27 @@ without evidence.
 
 ## Measured counts (scope)
 
-Measured on this tree at HEAD `e3e7d1a`, from two fresh logs under
-`/tmp/opencode/`:
+Measured on this tree at HEAD `245119b` plus the wave 5E working-tree changes
+listed in the log, from two fresh logs under `/tmp/opencode/`:
 
 - `nohl-final-with-pe.log` (`CBM_PE_PATH` pointed at the user's own PE):
-  **20 `Results:` lines summing to 187 passed, 0 failed, 0 skipped**; the
+  **21 `Results:` lines summing to 194 passed, 0 failed, 0 skipped**; the
   separately formatted `test_pelib` line reads `test_pelib: 21 passed,
   0 failed`.
 - `nohl-final-without-pe.log` (no usable PE: a bogus `CBM_PE_PATH`, the user's
-  file never moved or deleted): **20 `Results:` lines summing to 181 passed,
+  file never moved or deleted): **21 `Results:` lines summing to 188 passed,
   0 failed, 4 skipped**; the separately formatted `test_pelib` line reads
   `test_pelib: 10 passed, 0 failed`.
+
+Both logs record `worktree: dirty` and list the exact wave 5E files: the wave
+was measured before its commit, and the committed tree is that same content.
 
 Capture protocol: one shell per mode, with `export CBM_PE_PATH=...` in the same
 scope as the test commands (not merely echoed). Each log records the live value
 and whether the file exists; the no-PE SKIP reasons name the bogus path
 `/tmp/opencode/does-not-exist.exe`, which makes the evidence checkable.
 
-Scope: 187 and 181 are sums of the `Results:` lines only. The `test_pelib`
+Scope: 194 and 188 are sums of the `Results:` lines only. The `test_pelib`
 counts come from its own summary line and are **not** part of those sums. The
 4 skipped in the no-PE `Results:` sums come entirely from the two
 `test_backend_cli.sh` `Results:` lines (2 each); the PE-only skips in
@@ -62,7 +65,12 @@ synthetic regular files; no real device is touched.
   (`open`, `pread`, `pwrite`, `ioctl(BLKGETSIZE64)`). Device validation
   passes (MBR, DJ layout, capacity, safe write/read/restore).
 - **Host evidence:** `usb_mass.{h,c}` (offset-aware read/write), `cbm_layout`
-  validation, real-device roundtrip at LBA 54526976.
+  validation, real-device roundtrip at LBA 54526976. Wave 5E adds a
+  software-only tier-1 capture (`cdb_shim.{h,c}`, `cbm-tool cdb-capture`) that
+  logs control codes, input buffers and bounds-checked SCSI CDBs from PE
+  imports; `test_cdb_shim` proves the format against a synthetic PE. It has
+  **not** been run against the vendor PE (G1-b), so no vendor CDB is claimed:
+  see `docs/cdb-table.md`, whose vendor column reads `not observed`.
 
 ## Gap 2 — CBMUsbDisk.dll decryption yielded 0/16 valid PEs
 
@@ -166,9 +174,9 @@ synthetic regular files; no real device is touched.
 | Container body field map | **Inferred only** (Gap 4, partially closed) |
 | Forensic scanner | Read-only candidate finder; `--all-hits` reports close hits (Gap 5, confirmation open) |
 
-Suite counts: **187 passed, 0 failed, 0 skipped** with PE and **181 passed,
-0 failed, 4 skipped** without a usable PE, each across 20 `Results:` lines on
-this tree (2026-11-24); `test_pelib` is reported separately (21 / 10 passes).
+Suite counts: **194 passed, 0 failed, 0 skipped** with PE and **188 passed,
+0 failed, 4 skipped** without a usable PE, each across 21 `Results:` lines on
+this tree (2026-11-26); `test_pelib` is reported separately (21 / 10 passes).
 The whole-image entropy heatmap is read-only by default, infers regions from
 the MBR (never verified), caps samples at 64 Mi and pixels at 1 Mi, and a full
 500 GiB device pass remains hardware-gated. This repo is an honest,

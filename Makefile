@@ -24,7 +24,7 @@ FUZZ_BINS = fuzz_tea fuzz_container fuzz_decode fuzz_layout fuzz_scan
 
 TARGET = cbm-tool
 CLI = pe-call
-TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui test_json_cli.sh
+TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cdb_shim test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui test_json_cli.sh
 # Python MCP test is a source file: keep it out of TESTS so `clean` cannot rm it.
 MCP_TESTS = test_mcp_server.py
 
@@ -32,8 +32,8 @@ MCP_TESTS = test_mcp_server.py
 
 all: $(TARGET) $(CLI) $(TESTS)
 
-$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h
-	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c $(LDFLAGS) -lz
+$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cdb_shim.c cdb_shim.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h
+	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cdb_shim.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c $(LDFLAGS) -lz
 
 test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
@@ -74,6 +74,10 @@ test_cbm_fuzz: test_cbm_fuzz.c cbm_fuzz.c cbm_fuzz.h cbm_container.c tea_crypto.
 test_pelib: test_pelib.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_pelib.c pelib.c $(LDFLAGS)
 
+# Wave 5E: synthetic-PE DeviceIoControl capture (no device, no vendor PE)
+test_cdb_shim: test_cdb_shim.c cdb_shim.c cdb_shim.h pelib.c pelib.h
+	$(CC) $(CFLAGS) -o $@ test_cdb_shim.c cdb_shim.c pelib.c $(LDFLAGS)
+
 test_cbm_scan: test_cbm_scan.c cbm_scan.c cbm_scan.h cbm_fuzz.c cbm_fuzz.h cbm_container.c cbm_decode.c cbm_decode.h cbm_file.c paced_write.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_cbm_scan.c cbm_scan.c cbm_fuzz.c cbm_container.c cbm_decode.c cbm_file.c paced_write.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
 
@@ -99,7 +103,7 @@ pe-call: pe-call.c pelib.c pelib.h
 
 test: $(TESTS) $(TARGET)
 	@mkdir -p /tmp/opencode
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS)
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS)
 
 test-mcp: $(TARGET)
 	python3 $(MCP_TESTS)

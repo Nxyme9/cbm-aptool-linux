@@ -1,6 +1,6 @@
 # nx-cbm-lab
 
-Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 187 passing checks, no vendor binary, honest gaps.
+Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks: TEA cipher, forensic scanner, container editor, MBR doctor + TUI, entropy heatmap — 194 passing checks, no vendor binary, honest gaps.
 
 ## What this is
 
@@ -96,17 +96,20 @@ recovered tables, flag sequences and golden vectors.
     make clean && make && make test
 
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
-with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `e3e7d1a`, 2026-11-25)
-with the full chain `make clean && make && make test && sh test_backend_cli.sh`:
-**187 passed, 0 failed, 0 skipped** with PE and **181 passed, 0 failed,
-4 skipped** with no usable PE, each across 20 `Results:` lines. The separately
+with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `245119b` plus the
+wave 5E working-tree changes listed in the log, 2026-11-26) with the full chain
+`make clean && make && make test && sh test_backend_cli.sh`:
+**194 passed, 0 failed, 0 skipped** with PE and **188 passed, 0 failed,
+4 skipped** with no usable PE, each across 21 `Results:` lines. The separately
 formatted `test_pelib` line reports 21 passes with PE and 10 without; those
 counts are outside the `Results:` sums. Both runs exited 0 (`cli_exit=0`,
 `build_exit=0`, `make_test_exit=0`).
 
 Provenance: `/tmp/opencode/nohl-final-with-pe.log` and
-`/tmp/opencode/nohl-final-without-pe.log`. No real device is touched; every
-fixture is a synthetic regular file.
+`/tmp/opencode/nohl-final-without-pe.log`; both record `worktree: dirty` plus
+the exact 5E files, because the wave was measured before its commit, and the
+committed tree is that same content. No real device is touched; every fixture
+is a synthetic regular file.
 
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
@@ -117,6 +120,8 @@ is required.
 Wave 5H adds a local-only browser playground in [`wasm/`](wasm/) (static C API compiled to wasm32, hand-written HTML/JS, no server or install). Its build command, the 256 KiB static-memory cap, the `emcc`-absent / `clang` + `wasm-ld` route, and the exact Node test result are documented in [docs/wasm-playground.md](docs/wasm-playground.md); its suite is separate from the C suites above and does not change their measured pass counts.
 
 Wave 5J adds a read-only FUSE3 mount that exposes the RE artifacts as virtual files; its build command, per-file provenance, read-only guarantee, gated test and explicit out-of-scope list are documented in [docs/fuse-view.md](docs/fuse-view.md). It is a separate gated suite and does not change the measured C pass counts above.
+
+Wave 5E adds `cbm-tool cdb-capture <pe-path> --out <capture-file>`: a software-only PE import shim that writes a deterministic control-code/input-buffer/CDB capture. The exact line format, the observed-versus-not-observed table and the honest empty-result rule are in [docs/cdb-table.md](docs/cdb-table.md). No vendor PE, device or USB gadget was used; this is a separate capability and does not change the measured C pass counts above.
 
 ## Device validation
 

@@ -14,6 +14,8 @@ PLAIN_B=$SCRATCH/b.plain
 IMAGE=$SCRATCH/image.bin
 DOCTOR_IMG=$SCRATCH/doctor.img
 CORPUS=$SCRATCH/corpus
+CDB_PE=$SCRATCH/cdb-export.pe
+CDB_CAPTURE=$SCRATCH/cdb-capture.txt
 
 passed=0
 failed=0
@@ -28,6 +30,54 @@ printf 'Z' | dd of="$PLAIN_B" bs=1 seek=1000 conv=notrunc status=none || exit 1
 dd if=/dev/zero of="$IMAGE" bs=1048576 count=2 status=none || exit 1
 dd if=/dev/zero of="$DOCTOR_IMG" bs=512 count=1 status=none || exit 1
 mkdir -p "$CORPUS" || exit 1
+
+# Minimal PE32 with one export whose body is `ret 12`: no import table, no
+# vendor code, and a valid stdcall callee for pe_call_void.
+python3 - "$CDB_PE" <<'PY' || exit 1
+import struct
+import sys
+
+buf = bytearray(0x400)
+
+def p16(off, val):
+    buf[off:off + 2] = struct.pack('<H', val)
+
+def p32(off, val):
+    buf[off:off + 4] = struct.pack('<I', val)
+
+buf[0:2] = b'MZ'
+p32(0x3c, 0x80)
+buf[0x80:0x84] = b'PE\0\0'
+p16(0x84, 0x14c)       # IMAGE_FILE_MACHINE_I386
+p16(0x86, 1)           # one section
+p16(0x94, 224)         # SizeOfOptionalHeader
+p16(0x98, 0x10b)       # PE32 magic
+p32(0x98 + 28, 0x400000)
+p32(0x98 + 56, 0x140000)
+p32(0x98 + 92, 16)     # NumberOfRvaAndSizes
+p32(0x98 + 96, 0x1000) # export directory RVA
+p32(0x98 + 100, 40)    # export directory size
+buf[0x178:0x17d] = b'.text'
+p32(0x180, 0x400)      # VirtualSize
+p32(0x184, 0x1000)     # VirtualAddress
+p32(0x188, 0x200)      # SizeOfRawData (0x200 + 0x200 = file length)
+p32(0x18c, 0x200)      # PointerToRawData
+p32(0x20c, 0x1060)     # export Name RVA
+p32(0x210, 1)          # Base
+p32(0x214, 1)          # NumberOfFunctions
+p32(0x218, 1)          # NumberOfNames
+p32(0x21c, 0x1040)     # AddressOfFunctions
+p32(0x220, 0x1044)     # AddressOfNames
+p32(0x224, 0x1048)     # AddressOfNameOrdinals
+p32(0x240, 0x1050)     # EAT[0]
+p32(0x244, 0x1054)     # ENT[0]
+p16(0x248, 0)          # ordinal[0]
+buf[0x250:0x253] = b'\xc2\x0c\x00'  # ret 12 (stdcall cleanup)
+buf[0x254:0x25d] = b'MyExport\0'
+buf[0x260:0x26e] = b'synthetic.dll\0'
+with open(sys.argv[1], 'wb') as f:
+    f.write(buf)
+PY
 
 # Validate one captured stdout document: exactly one JSON object, fixed prefix,
 # required key set and (for arrays/objects) the published container types.
@@ -116,12 +166,30 @@ run_case heatmap 0 heatmap \
 run_case doctor 0 doctor \
     'path,window_gib,mbr_valid,partitions,repair_performed,dry_run' \
     ok doctor "$DOCTOR_IMG"
+run_case cdb-capture 0 cdb-capture \
+    'path,capture,export,called,events' \
+    ok cdb-capture "$CDB_PE" --out "$CDB_CAPTURE" --export MyExport \
+    --arg0 1 --arg1 2 --arg2 3
 
 # Error paths keep their exit codes and still print a human message on stderr.
 run_case container-error 1 container error \
     error container "$SCRATCH/missing.bin"
 run_case diff-usage 2 diff error \
     error diff "$PLAIN_A"
+run_case cdb-capture-usage 2 cdb-capture error \
+    error cdb-capture --out "$SCRATCH/cdb-unused.txt"
+run_case cdb-capture-missing-pe 2 cdb-capture error \
+    error cdb-capture "$SCRATCH/no-such-cdb.pe" --out "$SCRATCH/cdb-unused.txt"
+run_case cdb-capture-missing-export 1 cdb-capture error \
+    error cdb-capture "$CDB_PE" --out "$SCRATCH/cdb-empty.txt" --export NoSuchExport
+
+# A missing export still publishes the header: an empty capture is a result.
+TEST cdb-capture-empty-header
+if [ "$(head -n 1 "$SCRATCH/cdb-empty.txt")" = 'cbm-cdb-capture/1' ]; then
+    PASS
+else
+    FAIL_CASE 'empty capture header not preserved'
+fi
 
 # scan/heatmap --json <path> sidecars stay byte-for-byte identical with and
 # without an additional bare --json on the same command line.
