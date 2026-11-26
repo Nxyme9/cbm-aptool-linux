@@ -103,10 +103,14 @@ pe-call: pe-call.c pelib.c pelib.h
 
 test: $(TESTS) $(TARGET)
 	@mkdir -p /tmp/opencode
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS)
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS) && python3 test_fwemu.py
 
 test-mcp: $(TARGET)
 	python3 $(MCP_TESTS)
+
+# Wave 5L: synthetic firmware model, stdlib Python only (no emulator/device)
+test-fwemu:
+	python3 test_fwemu.py
 
 # CLI-level backend selection: no device access; fixtures go under /tmp/opencode.
 test-cli: $(TARGET)
@@ -188,4 +192,4 @@ ci:
 clean:
 	rm -f $(TARGET) $(CLI) $(filter-out %.sh,$(TESTS)) $(FUZZ_BINS) *.o
 
-.PHONY: all test test-mcp test-cli asan fuzz $(FUZZ_BINS) ci clean
+.PHONY: all test test-mcp test-fwemu test-cli asan fuzz $(FUZZ_BINS) ci clean

@@ -102,7 +102,8 @@ wave 5E working-tree changes listed in the log, 2026-11-26) with the full chain
 **194 passed, 0 failed, 0 skipped** with PE and **188 passed, 0 failed,
 4 skipped** with no usable PE, each across 21 `Results:` lines. The separately
 formatted `test_pelib` line reports 21 passes with PE and 10 without; those
-counts are outside the `Results:` sums. Both runs exited 0 (`cli_exit=0`,
+counts are outside the `Results:` sums. The separately formatted
+`test_fwemu: 17 passed, 0 failed` line is outside the sums too. Both runs exited 0 (`cli_exit=0`,
 `build_exit=0`, `make_test_exit=0`).
 
 Provenance: `/tmp/opencode/nohl-final-with-pe.log` and
@@ -110,6 +111,11 @@ Provenance: `/tmp/opencode/nohl-final-with-pe.log` and
 the exact 5E files, because the wave was measured before its commit, and the
 committed tree is that same content. No real device is touched; every fixture
 is a synthetic regular file.
+
+A synthetic firmware model lives in `fwemu/` (see
+[docs/firmware-emulation.md](docs/firmware-emulation.md)). It is model-level
+only, runs no firmware and changes no measured count: `test_fwemu:` is a
+separately formatted line outside the `Results:` sums.
 
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell

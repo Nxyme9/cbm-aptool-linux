@@ -318,7 +318,8 @@ section-copy loop.
   the shell. `test_pelib` (21 passes with PE; separately formatted
   `test_pelib: 10 passed, 0 failed` without a usable PE) covers loader
   failures, golden encrypt `e66254b5da09fb31`, decrypt roundtrip and IAT
-  hook dispatch.
+  hook dispatch. The separately formatted `test_fwemu: 17 passed, 0 failed`
+  line is outside the `Results:` sums.
 
 ## 10b. CDB capture shims (Wave 5E, `cdb_shim.{h,c}`)
 
@@ -357,6 +358,17 @@ gadget, vendor PE or vendor DLL participates in any test.
       -> usb_mass_write_at (restore original sector)
       -> verify restored
 
+## 10c. Synthetic firmware model (Wave 5L, `fwemu/`)
+
+SYNTHETIC ONLY: no firmware image, ARM/8051 program, Unicorn or ARM toolchain
+is used. The stdlib Python package models BCH(255, 223, t=4) syndromes and
+decode, per-block erase counts with a lowest-count/lowest-index policy, and a
+deterministic trace whose every line contains `synthetic`. `HookSink` exposes
+syndrome, erase-count and MMIO register hooks for a future Unicorn runner;
+`run_synthetic()` drives them in plain Python. Gap 3 stays open: the gate is a
+firmware dump + CBM2199E/2199s/3380 datasheet + ECC counters. See
+[docs/firmware-emulation.md](docs/firmware-emulation.md).
+
 ## Build
 
     make clean && make && make test
@@ -369,6 +381,7 @@ gadget, vendor PE or vendor DLL participates in any test.
 and one shell CLI suite. Measured at HEAD `245119b` plus the wave 5E working
 tree: 194 passed, 0 failed, 0 skipped with PE, and 188 passed, 0 failed,
 4 skipped without a usable PE, each across 21 `Results:` lines (plus a
-separately formatted `test_pelib` line: 21 / 10 passes). Counts are from
+separately formatted `test_pelib` line: 21 / 10 passes, plus the separately
+formatted `test_fwemu: 17 passed, 0 failed` line). Counts are from
 `/tmp/opencode/nohl-final-with-pe.log` and
 `/tmp/opencode/nohl-final-without-pe.log`; see [GAPS.md](GAPS.md).

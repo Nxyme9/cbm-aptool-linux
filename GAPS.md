@@ -28,7 +28,8 @@ listed in the log, from two fresh logs under `/tmp/opencode/`:
 - `nohl-final-with-pe.log` (`CBM_PE_PATH` pointed at the user's own PE):
   **21 `Results:` lines summing to 194 passed, 0 failed, 0 skipped**; the
   separately formatted `test_pelib` line reads `test_pelib: 21 passed,
-  0 failed`.
+  0 failed`; the separately formatted `test_fwemu: 17 passed, 0 failed` line
+  is likewise outside the sums.
 - `nohl-final-without-pe.log` (no usable PE: a bogus `CBM_PE_PATH`, the user's
   file never moved or deleted): **21 `Results:` lines summing to 188 passed,
   0 failed, 4 skipped**; the separately formatted `test_pelib` line reads
