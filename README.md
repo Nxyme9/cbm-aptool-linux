@@ -175,6 +175,17 @@ distributed claim are in [docs/distributed-scan.md](docs/distributed-scan.md).
 `make test` also runs `test_mesh_scan`, whose
 `test_mesh_scan: 6 passed, 0 failed` line is outside the `Results:` sums.
 
+Wave 5R adds `exfat_carver.{h,c}`, a read-only exFAT undelete carver for the
+DJ_DATA partition (type `0x07`): it parses the boot sector, allocation bitmap
+and root directory, and recovers only deleted entries (`0xE5`) whose stream is
+contiguous (`NoFatChain`) and whose data clusters are free in the bitmap.
+Fragmented, overwritten or live files are reported `lost`/ignored, never
+guessed, and recovered bytes go only to a caller-named output directory.
+`exfat_carve_dj_data` locates the volume from a synthetic MBR. Contract and
+limits: [docs/exfat-carving.md](docs/exfat-carving.md). `make test` also runs
+`test_exfat_carver`, whose `test_exfat_carver: 5 passed, 0 failed` line is
+outside the `Results:` sums.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

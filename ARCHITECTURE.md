@@ -472,6 +472,24 @@ Nothing in this module writes to the scanned image or device.
 (`test_mesh_scan: 6 passed, 0 failed`) outside the `Results:` sums. Details and
 the CLS adapter seam: [docs/distributed-scan.md](docs/distributed-scan.md).
 
+## 10i. exFAT undelete carver (Wave 5R, `exfat_carver.{h,c}`)
+
+`exfat_carve` reads an exFAT volume at an explicit byte offset and reports
+deleted files whose metadata is intact; `exfat_carve_dj_data` derives the offset
+from the MBR via `cbm_layout_parse` and partition type `0x07`. The reader
+validates the `EXFAT   ` boot signature and `0x55AA`, the sector/cluster
+exponents, the allocation-bitmap entry (`0x81`) in the root directory and, for
+each deleted entry (`0xE5`), a contiguous stream (`NoFatChain`), an in-range
+first cluster and free bitmap bits for every data cluster. Only then are bytes
+copied to the caller-named output directory; fragmented, overwritten or
+out-of-range entries become `lost` report entries with a reason, never guessed
+bytes. Live entries (`0x85`) are ignored. The source is opened read-only and
+may be a regular file or block device. `test_exfat_carver` builds a synthetic
+16-sector volume under `/tmp/opencode` (intact deleted file, overwritten deleted
+file, live file, corrupt boot, synthetic MBR) and reports on its own line
+(`test_exfat_carver: 5 passed, 0 failed`) outside the `Results:` sums. Contract
+and limits: [docs/exfat-carving.md](docs/exfat-carving.md).
+
 ## Build
 
     make clean && make && make test
