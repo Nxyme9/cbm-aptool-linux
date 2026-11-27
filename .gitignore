@@ -66,3 +66,6 @@ test_mesh_scan
 test_exfat_carver
 # Wave 5S telemetry exporter test
 test_telemetry
+# Wave 5O Pico inspector (SDK build dir; host binary is built under /tmp/opencode)
+pico/build/
+pico/test_pico_host

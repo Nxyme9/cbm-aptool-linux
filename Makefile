@@ -136,6 +136,11 @@ test-mcp: $(TARGET)
 test-fwemu:
 	python3 test_fwemu.py
 
+# Wave 5O: portable Pico codec/inspector host test + SDK-gated firmware build.
+# Separate suite: its own summary line stays outside the frozen `Results:` sums.
+test-pico:
+	sh pico/test.sh
+
 # Wave 5M: recon suite on its own; CBM_PE_PATH is optional (PE cases skip).
 test-recon: test_recon
 	./test_recon
@@ -220,4 +225,4 @@ ci:
 clean:
 	rm -f $(TARGET) $(CLI) $(filter-out %.sh,$(TESTS)) test_recon $(FUZZ_BINS) *.o
 
-.PHONY: all test test-mcp test-fwemu test-recon test-cli asan fuzz $(FUZZ_BINS) ci clean
+.PHONY: all test test-mcp test-fwemu test-pico test-recon test-cli asan fuzz $(FUZZ_BINS) ci clean

@@ -196,6 +196,15 @@ explicit operator choice. See [docs/telemetry.md](docs/telemetry.md) and the
 Grafana dashboard `dashboards/cbm.json`. `make test` also runs `test_telemetry`,
 whose `test_telemetry: 8 passed, 0 failed` line is outside the `Results:` sums.
 
+Wave 5O adds `pico/`, a POSIX-free subset of the clean-room codec plus a
+read-only RP2040 container inspector. `pico/test.sh` compiles those exact
+embedded sources with plain `cc` and runs `pico/test_host.c`, whose
+`test_pico_host: 18 passed, 0 failed` line is outside the `Results:` sums; the
+same script builds the firmware only when `PICO_SDK_PATH` is set. Vectors and
+the honest hardware gates (no SDK/board here, USB mass-storage host input not
+implemented) are in [docs/pico-inspector.md](docs/pico-inspector.md). It is a
+separate suite and does not change the measured C pass counts above.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

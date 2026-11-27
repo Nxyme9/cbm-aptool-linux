@@ -510,6 +510,23 @@ and a real loopback HTTP scrape with eight checks on its own line
 (`test_telemetry: 8 passed, 0 failed`) outside the `Results:` sums. Contract:
 [docs/telemetry.md](docs/telemetry.md); dashboard: `dashboards/cbm.json`.
 
+## 10k. Pico inspector (Wave 5O, `pico/`)
+
+`tea_core.{h,c}` is a POSIX-free subset of the 5A cipher: the same recovered
+tables, three-core transform and key schedule, but no PE loader, `mmap`,
+stdio device I/O or host helpers. `inspector.{h,c}` adds SDK-free analysis
+(byte-0 encrypted flag, Shannon entropy, printable-string count, bounded
+hexdump, report struct). `test_vectors.h` freezes vectors measured from
+`tea_native_encrypt()`; `test_host.c` verifies the embedded sources byte-for-
+byte (18 checks, own summary line outside the `Results:` sums). `test.sh`
+runs that host test and builds `CMakeLists.txt` only when `PICO_SDK_PATH`
+points at a real SDK; otherwise it prints an explicit skip. `firmware.c` takes
+an exact-size 85688-byte container over USB serial, decrypts in RAM and
+prints a report; two buttons dump plaintext and verify the full-body
+roundtrip. Buffers are static (RP2040 has ~8 KiB stack). Source and host
+vectors are committed; firmware build/flash and USB-mass-storage-host input
+stay hardware-gated with exact gates in [docs/pico-inspector.md](docs/pico-inspector.md).
+
 ## Build
 
     make clean && make && make test
