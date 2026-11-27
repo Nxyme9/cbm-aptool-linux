@@ -36,6 +36,8 @@
  *                            read-only host-observable fingerprint compare;
  *                            fails closed without a baseline, never opens
  *                            the device for I/O, never claims firmware
+ *   cbm-tool telemetry --listen :PORT [--device PATH] [--state-file PATH]
+ *                            read-only Prometheus exporter; loopback by default
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +61,7 @@
 #include "cbm_container.h"
 #include "vault.h"
 #include "trust.h"
+#include "telemetry.h"
 #include "cbm_file.h"
 #include "cbm_inspect.h"
 #include "paced_write.h"
@@ -1817,7 +1820,7 @@ int main(int argc, char **argv) {
     if (json) json_out = cap.json_buf;
     int rc = 0;
 
-    if (!json) {
+    if (!json && !(command && strcmp(command, "telemetry") == 0)) {
         printf("CBMUsbDisk Linux-Native Tool v1.0\n");
         printf("==================================\n\n");
     }
@@ -1838,8 +1841,10 @@ int main(int argc, char **argv) {
      * doctor/tui are read-only diagnostics except the explicitly authorised
      * repair path. recon is a pure read-only PE analysis and needs no crypto
      * backend. trust is a read-only descriptor comparison and never opens the
-     * device for I/O. All eleven subcommands are dispatched before the device
-     * path so nothing can be mistaken for a block-device argument. */
+     * device for I/O. telemetry is a read-only Prometheus exporter that binds
+     * loopback by default and never opens a device for writing. All twelve
+     * subcommands are dispatched before the device path so nothing can be
+     * mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "vault") == 0)
         rc = vault_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (argc >= 2 && strcmp(argv[1], "trust") == 0)
@@ -1862,6 +1867,8 @@ int main(int argc, char **argv) {
         rc = cdb_capture_mode(argc, argv, json_out);
     else if (argc >= 2 && strcmp(argv[1], "recon") == 0)
         rc = recon_cli_ex(argc, argv, stdout, stderr, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "telemetry") == 0)
+        rc = telemetry_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (selftest() != 0)
         rc = 1;
     else if (argc > 1)

@@ -64,3 +64,5 @@ test_trust
 test_mesh_scan
 # Wave 5R exFAT undelete carver test
 test_exfat_carver
+# Wave 5S telemetry exporter test
+test_telemetry

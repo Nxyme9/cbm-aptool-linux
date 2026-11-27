@@ -24,7 +24,7 @@ FUZZ_BINS = fuzz_tea fuzz_container fuzz_decode fuzz_layout fuzz_scan
 
 TARGET = cbm-tool
 CLI = pe-call
-TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cdb_shim test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui test_vault test_trust test_json_cli.sh test_challenge.sh test_mesh_scan test_exfat_carver
+TESTS = test_tea test_tea_native test_cbm test_paced test_usb_mass test_layout test_nand test_cbm_file test_cbm_inspect test_pelib test_cdb_shim test_cbm_decode test_cbm_diff test_cbm_fuzz test_cbm_scan test_cbm_scan_report test_entropy_map test_png_write test_cbm_doctor test_cbm_tui test_vault test_trust test_json_cli.sh test_challenge.sh test_mesh_scan test_exfat_carver test_telemetry
 # Python MCP test is a source file: keep it out of TESTS so `clean` cannot rm it.
 MCP_TESTS = test_mcp_server.py
 
@@ -32,8 +32,8 @@ MCP_TESTS = test_mcp_server.py
 
 all: $(TARGET) $(CLI) $(TESTS) test_recon
 
-$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cdb_shim.c cdb_shim.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h recon.c recon.h vault.c vault.h trust.c trust.h
-	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cdb_shim.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c recon.c vault.c trust.c $(LDFLAGS) -lz
+$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cdb_shim.c cdb_shim.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h recon.c recon.h vault.c vault.h trust.c trust.h telemetry.c telemetry.h
+	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cdb_shim.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c recon.c vault.c trust.c telemetry.c $(LDFLAGS) -lz
 
 test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
@@ -122,9 +122,12 @@ test_mesh_scan: test_mesh_scan.c mesh_scan.c mesh_scan.h cbm_scan.c cbm_scan.h c
 test_exfat_carver: test_exfat_carver.c exfat_carver.c exfat_carver.h cbm_file.c cbm_file.h cbm_layout.c cbm_layout.h cli_json.c cli_json.h paced_write.c paced_write.h
 	$(CC) $(CFLAGS) -o $@ test_exfat_carver.c exfat_carver.c cbm_file.c cbm_layout.c cli_json.c paced_write.c $(LDFLAGS)
 
+test_telemetry: test_telemetry.c telemetry.c telemetry.h tea_crypto.c cbm_backend.h cli_json.c cli_json.h
+	$(CC) $(CFLAGS) -o $@ test_telemetry.c telemetry.c tea_crypto.c tea_native.c pelib.c cli_json.c $(LDFLAGS)
+
 test: $(TESTS) $(TARGET) test_recon
 	@mkdir -p /tmp/opencode
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && ./test_vault && ./test_trust && sh ./test_json_cli.sh && python3 $(MCP_TESTS) && python3 test_fwemu.py && ./test_recon && sh ./test_challenge.sh && ./test_mesh_scan && ./test_exfat_carver
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && ./test_vault && ./test_trust && sh ./test_json_cli.sh && python3 $(MCP_TESTS) && python3 test_fwemu.py && ./test_recon && sh ./test_challenge.sh && ./test_mesh_scan && ./test_exfat_carver && ./test_telemetry
 
 test-mcp: $(TARGET)
 	python3 $(MCP_TESTS)

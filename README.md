@@ -186,6 +186,16 @@ limits: [docs/exfat-carving.md](docs/exfat-carving.md). `make test` also runs
 `test_exfat_carver`, whose `test_exfat_carver: 5 passed, 0 failed` line is
 outside the `Results:` sums.
 
+Wave 5S adds `telemetry.{h,c}` and `cbm-tool telemetry --listen :PORT` (or
+`--print`), a read-only Prometheus exporter: device presence and capacity come
+from a `stat()`/O_RDONLY probe, counters from a caller-supplied key=value state
+file re-read on each scrape, and the `device` label is the canonicalised
+basename only (by-id serials never reach the output). A refresh failure returns
+HTTP 500 rather than stale values. `:PORT` binds loopback; a routable bind is an
+explicit operator choice. See [docs/telemetry.md](docs/telemetry.md) and the
+Grafana dashboard `dashboards/cbm.json`. `make test` also runs `test_telemetry`,
+whose `test_telemetry: 8 passed, 0 failed` line is outside the `Results:` sums.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

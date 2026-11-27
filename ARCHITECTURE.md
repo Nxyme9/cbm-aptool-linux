@@ -490,6 +490,26 @@ file, live file, corrupt boot, synthetic MBR) and reports on its own line
 (`test_exfat_carver: 5 passed, 0 failed`) outside the `Results:` sums. Contract
 and limits: [docs/exfat-carving.md](docs/exfat-carving.md).
 
+## 10j. Prometheus telemetry exporter (Wave 5S, `telemetry.{h,c}`)
+
+`telemetry_state_t` carries eight metrics: `device_present`,
+`device_capacity_bytes`, `scan_progress_ratio`, `containers_found`,
+`cdb_commands_total`, `entropy_blocks_total`,
+`last_validation_timestamp_seconds` and `crypto_backend_native`. Device
+presence/capacity come from a read-only probe (`stat` for regular files,
+`O_RDONLY` + `BLKGETSIZE64` for block devices); counters come from a caller-named
+key=value state file re-read on each `/metrics` scrape, parsed into a temporary
+and committed atomically so a bad line cannot yield a partial update. A refresh
+failure returns HTTP 500, never stale values. `telemetry_scrub_device`
+canonicalises the path and keeps only the final component, so by-id serials
+never enter the `device` label. `telemetry_listen` binds loopback for `:PORT`;
+a routable bind is an explicit operator choice. `telemetry_cli_ex` serves until
+SIGINT/SIGTERM or prints one document with `--print` (no banner, clean for
+redirection). `test_telemetry` exercises the render, scrub, probe, state parser
+and a real loopback HTTP scrape with eight checks on its own line
+(`test_telemetry: 8 passed, 0 failed`) outside the `Results:` sums. Contract:
+[docs/telemetry.md](docs/telemetry.md); dashboard: `dashboards/cbm.json`.
+
 ## Build
 
     make clean && make && make test
