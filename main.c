@@ -32,6 +32,10 @@
  *   cbm-tool recon <pe> [--top N] [--all] [--json]
  *                            read-only heuristic ranking of candidate
  *                            block-cipher functions in a vendor PE
+ *   cbm-tool trust <device|observation.json> --baseline <json> [--json]
+ *                            read-only host-observable fingerprint compare;
+ *                            fails closed without a baseline, never opens
+ *                            the device for I/O, never claims firmware
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,6 +58,7 @@
 #include "tea_native.h"
 #include "cbm_container.h"
 #include "vault.h"
+#include "trust.h"
 #include "cbm_file.h"
 #include "cbm_inspect.h"
 #include "paced_write.h"
@@ -1827,15 +1832,18 @@ int main(int argc, char **argv) {
             }
         }
     }
-    /* Container/vault/fuzz/scan modes load the crypto backend themselves and
-     * must not run the selftest first (that would init/cleanup TEA twice). diff
-     * and heatmap are pure byte analysis and need no crypto at all. doctor/tui
-     * are read-only diagnostics except the explicitly authorised repair path.
-     * recon is a pure read-only PE analysis and needs no crypto backend.
-     * All ten subcommands are dispatched before the device path so nothing
-     * can be mistaken for a block-device argument. */
+    /* Container/vault/trust/fuzz/scan modes load the crypto backend themselves
+     * and must not run the selftest first (that would init/cleanup TEA twice).
+     * diff and heatmap are pure byte analysis and need no crypto at all.
+     * doctor/tui are read-only diagnostics except the explicitly authorised
+     * repair path. recon is a pure read-only PE analysis and needs no crypto
+     * backend. trust is a read-only descriptor comparison and never opens the
+     * device for I/O. All eleven subcommands are dispatched before the device
+     * path so nothing can be mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "vault") == 0)
         rc = vault_cli_ex(argc, argv, stdout, stderr, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "trust") == 0)
+        rc = trust_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (argc >= 2 && strcmp(argv[1], "container") == 0)
         rc = container_mode(argc, argv, json_out);
     else if (argc >= 2 && strcmp(argv[1], "diff") == 0)

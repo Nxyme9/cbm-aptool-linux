@@ -410,6 +410,26 @@ its own error document (`main.c` does that on a non-zero return). `test_vault`
 reports on its own line (`test_vault: 18 passed, 0 failed`) outside the
 `Results:` sums. Layout, limits and CLI usage: [docs/vault.md](docs/vault.md).
 
+## 10f. BadUSB trust scanner (Wave 5P, `trust.{h,c}`)
+
+`trust_parse_profile` / `trust_load_profile` read one flat JSON profile
+(`vid`, `pid`, `product`, `interfaces[]`, `cdbs[]`, `firmware_marker`) with a
+bounded, depth-aware key lookup; files are capped at 1 MiB and unknown keys are
+ignored. `serial` is parsed but never stored or compared, so baselines keep
+redacted serials. `trust_compare` appends findings in a stable order
+(identity, product, interfaces, CDBs, firmware) with severities: `usb-id` and
+`iface-extra-hid` critical; `iface-extra`, `iface-missing`, `product`,
+`cdb-unknown` and `fw-marker-changed` warning; `cdb-not-observed` and
+`fw-unverified` info. Trusted means zero critical and zero warning.
+`trust_observe_sysfs` resolves `/sys/class/block/<dev>/device`, walks up to the
+USB device directory and reads `idVendor`, `idProduct`, `product` and each
+interface's class/subclass/protocol — it never opens the device for I/O.
+`trust_cli_ex` requires `--baseline` (fail closed), exits 0 trusted / 1
+findings or error / 2 usage, emits `cbm/1` JSON and never emits its own error
+document. `test_trust` reports on its own line (`test_trust: 16 passed,
+0 failed`) outside the `Results:` sums. Details:
+[docs/device-trust.md](docs/device-trust.md).
+
 ## Build
 
     make clean && make && make test

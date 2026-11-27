@@ -140,6 +140,18 @@ warning), tamper checks and device `--write-back` gate are in
 separately formatted line is `test_vault: 18 passed, 0 failed`; that line is
 outside the `Results:` sums and does not change the measured counts above.
 
+Wave 5P adds `cbm-tool trust <device|observation.json> --baseline <json>
+[--json]`: a read-only BadUSB trust scanner that compares a host-observable
+USB fingerprint (VID/PID, product, interface descriptors, captured CDBs, an
+optional firmware marker from a real dump) against a known-good baseline and
+reports each mismatch with a severity. It never opens the device for I/O (a
+block device is observed through sysfs), fails closed without `--baseline`,
+and makes no firmware claim. Exit codes are 0 trusted, 1 findings or error,
+2 usage. The schema, severities and limits are in
+[docs/device-trust.md](docs/device-trust.md). `make test` also runs
+`test_trust`, whose separately formatted line is
+`test_trust: 16 passed, 0 failed`; that line is outside the `Results:` sums.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside
