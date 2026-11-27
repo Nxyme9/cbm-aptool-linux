@@ -446,6 +446,32 @@ end; its `CTF challenge: 6 passed, 0 failed` line is outside the `Results:`
 sums. The full RE journey and gap gates are in `WRITEUP.md`; task and hints in
 `challenge/README.md`.
 
+## 10h. Distributed mesh scan (Wave 5N, `mesh_scan.{h,c}`)
+
+`mesh_plan_ranges` splits an inclusive byte range into start offsets whose
+consecutive distance is at most `chunk_bytes`; the step is
+`chunk_bytes - 171888`, where 171888 is two 85688-byte containers plus one LBA.
+That overlap guarantees a container straddling a range boundary is wholly
+inside at least one range, and it makes `chunk_bytes <= 171888` a hard error.
+`mesh_scan_run` walks the planned ranges and hands each to a
+`mesh_worker_fn` callback: transport-agnostic, so the in-tree worker can run
+`cbm_scan_image_ex` read-only while a CLS adapter can forward the same range to
+a peer. Every worker owns its hit array (`cbm_scan_free_hits`); the coordinator
+copies hits into one aggregate, sorts by absolute offset and collapses
+duplicates with `mesh_dedup`, because overlap ranges legitimately see the same
+container twice. A peer that is absent or returns an error causes that range to
+be retried with a local read-only scan and counted in `local_retries`; it is
+never silently dropped. `mesh_result_t.mode` is `distributed` only when at least
+one range was answered by a peer, otherwise `local_fallback`, and
+`mode_detail` states how many of how many ranges ran where. `mesh_report_json`
+emits one deterministic `cbm/1` document with mode, worker/job counters and the
+deduplicated hits; worker names are diagnostics only and never appear in JSON.
+Nothing in this module writes to the scanned image or device.
+`test_mesh_scan` uses two local mock workers plus the real offline scanner on a
+512 KiB synthetic image and reports on its own line
+(`test_mesh_scan: 6 passed, 0 failed`) outside the `Results:` sums. Details and
+the CLS adapter seam: [docs/distributed-scan.md](docs/distributed-scan.md).
+
 ## Build
 
     make clean && make && make test

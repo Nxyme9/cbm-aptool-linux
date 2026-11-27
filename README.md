@@ -162,6 +162,19 @@ committed and no device is used. The RE journey and honest gaps are in
 `test_challenge.sh`, whose `CTF challenge: 6 passed, 0 failed` line is outside
 the `Results:` sums.
 
+Wave 5N adds `mesh_scan.{h,c}`, a read-only distributed scan coordinator: it
+splits an image or device byte range into overlapping ranges (171888-byte
+overlap, the same two-container window the scanner needs), dispatches each range
+to a transport-agnostic worker callback, deduplicates hits by absolute offset
+and emits a `cbm/1` JSON report that always names the execution mode
+(`distributed` or `local_fallback`). With no reachable peer it fails closed to
+local chunks and says so; it never claims remote execution that did not happen.
+The in-tree worker is a local read-only scan; a CLS-backed adapter supplies
+remote peers through the same callback. Contract, limits and the honest
+distributed claim are in [docs/distributed-scan.md](docs/distributed-scan.md).
+`make test` also runs `test_mesh_scan`, whose
+`test_mesh_scan: 6 passed, 0 failed` line is outside the `Results:` sums.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

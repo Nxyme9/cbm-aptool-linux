@@ -60,3 +60,5 @@ __pycache__/
 *.pyc
 test_vault
 test_trust
+# Wave 5N distributed mesh scan coordinator test
+test_mesh_scan
