@@ -152,6 +152,16 @@ and makes no firmware claim. Exit codes are 0 trusted, 1 findings or error,
 `test_trust`, whose separately formatted line is
 `test_trust: 16 passed, 0 failed`; that line is outside the `Results:` sums.
 
+Wave 5K adds a self-contained CTF: `python3 challenge/generate.py --out disk.img`
+builds a sparse 64 MiB synthetic image with a nominal DJ MBR and one planted
+TEA-encrypted container at LBA 4096; `sh solver/solve.sh disk.img` scans,
+carves and decrypts it to recover the flag. No disk blob or vendor binary is
+committed and no device is used. The RE journey and honest gaps are in
+[WRITEUP.md](WRITEUP.md), with task/hints in
+[challenge/README.md](challenge/README.md). `make test` also runs
+`test_challenge.sh`, whose `CTF challenge: 6 passed, 0 failed` line is outside
+the `Results:` sums.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

@@ -430,6 +430,22 @@ document. `test_trust` reports on its own line (`test_trust: 16 passed,
 0 failed`) outside the `Results:` sums. Details:
 [docs/device-trust.md](docs/device-trust.md).
 
+## 10g. CTF challenge and write-up (Wave 5K)
+
+`challenge/generate.py --out <image> [--flag <text>]` writes a sparse 64 MiB
+regular file: a nominal DJ MBR (same constants as `cbm_layout.c`) at LBA 0 and
+one 85688-byte container at LBA 4096. It does not create the ciphertext itself;
+it calls `cbm-tool container --inject --output` on a seed container so the
+challenge and solver share one TEA implementation. The plaintext body is
+deterministic 85687-byte printable data with the flag at a fixed offset.
+`solver/solve.sh <image>` runs `cbm-tool scan --carve --json`, then
+`cbm-tool container --dump-plain` on each carved candidate, and prints the flag.
+It is read-only on the image and confines all scratch output to `/tmp/opencode`.
+`test_challenge.sh` generates a fresh image and checks the exact flag end to
+end; its `CTF challenge: 6 passed, 0 failed` line is outside the `Results:`
+sums. The full RE journey and gap gates are in `WRITEUP.md`; task and hints in
+`challenge/README.md`.
+
 ## Build
 
     make clean && make && make test
