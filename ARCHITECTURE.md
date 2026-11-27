@@ -389,6 +389,27 @@ this wave closes only the method/tooling half. `test_recon` reports on its own
 line (`test_recon: 13 passed, 0 failed` with `CBM_PE_PATH`; 7 passed plus a
 SKIP line without it) outside the `Results:` sums.
 
+## 10e. Derived vault (Wave 5Q, `vault.{h,c}`)
+
+`vault_create/load/save` store key/value records inside exactly one
+`CBM_CONTAINER_SIZE` (85688-byte) envelope: byte 0 is the preserved header
+byte (bit 7 = encrypted) and bytes 1..85687 are the TEA body. The plaintext
+body is a private format — FNV-1a 64 checksum, `CBMVLT01` magic, u16 version,
+u16 count, u32 reserved, then records of `u16 label_len, u16 value_len,
+label, value` in insertion order, zero-padded. It is a **derived** format: it
+reuses the envelope and the clean-room TEA core but claims no vendor
+compatibility. Labels are 1..63 printable ASCII bytes, values 0..4096 bytes,
+at most 1024 records within the 85663-byte record budget; `put` replaces an
+existing label in place. The key comes from `CBM_VAULT_KEY` (exactly 16
+bytes); when unset the CLI uses the public `TEA_NATIVE_KEY` and prints an
+explicit warning (obfuscation, not confidentiality). Wrong key, ciphertext
+tamper and checksum tamper are all refused. Writes to a block device require
+`--write-back`, and every write is read back and compared; `get`/`list` never
+write. `vault_cli_ex` emits `cbm/1` JSON for all five commands and never emits
+its own error document (`main.c` does that on a non-zero return). `test_vault`
+reports on its own line (`test_vault: 18 passed, 0 failed`) outside the
+`Results:` sums. Layout, limits and CLI usage: [docs/vault.md](docs/vault.md).
+
 ## Build
 
     make clean && make && make test

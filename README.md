@@ -130,6 +130,16 @@ whose separately formatted line is `test_recon: 13 passed, 0 failed` with
 when it is unset). That line is outside the `Results:` sums and does not
 change the measured counts above.
 
+Wave 5Q adds `cbm-tool vault <init|put|get|list|erase> <file> [label] [value]`:
+a derived encrypted key/value store that reuses the 85688-byte CBM envelope
+and the clean-room TEA core. It is **not** a vendor container and claims no
+vendor compatibility; the exact body layout, limits, key handling
+(`CBM_VAULT_KEY`, 16 bytes; unset falls back to the public TEA key with a
+warning), tamper checks and device `--write-back` gate are in
+[docs/vault.md](docs/vault.md). `make test` also runs `test_vault`, whose
+separately formatted line is `test_vault: 18 passed, 0 failed`; that line is
+outside the `Results:` sums and does not change the measured counts above.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

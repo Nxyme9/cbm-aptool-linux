@@ -53,6 +53,7 @@
 #include "cbm_backend.h"
 #include "tea_native.h"
 #include "cbm_container.h"
+#include "vault.h"
 #include "cbm_file.h"
 #include "cbm_inspect.h"
 #include "paced_write.h"
@@ -1826,14 +1827,16 @@ int main(int argc, char **argv) {
             }
         }
     }
-    /* Container/fuzz/scan modes load the crypto backend themselves and must
-     * not run the selftest first (that would init/cleanup TEA twice). diff and
-     * heatmap are pure byte analysis and need no crypto at all. doctor/tui are
-     * read-only diagnostics except the explicitly authorised repair path.
+    /* Container/vault/fuzz/scan modes load the crypto backend themselves and
+     * must not run the selftest first (that would init/cleanup TEA twice). diff
+     * and heatmap are pure byte analysis and need no crypto at all. doctor/tui
+     * are read-only diagnostics except the explicitly authorised repair path.
      * recon is a pure read-only PE analysis and needs no crypto backend.
-     * All nine subcommands are dispatched before the device path so nothing
+     * All ten subcommands are dispatched before the device path so nothing
      * can be mistaken for a block-device argument. */
-    if (argc >= 2 && strcmp(argv[1], "container") == 0)
+    if (argc >= 2 && strcmp(argv[1], "vault") == 0)
+        rc = vault_cli_ex(argc, argv, stdout, stderr, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "container") == 0)
         rc = container_mode(argc, argv, json_out);
     else if (argc >= 2 && strcmp(argv[1], "diff") == 0)
         rc = diff_mode(argc, argv, json_out);
