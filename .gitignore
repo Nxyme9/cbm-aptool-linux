@@ -43,6 +43,8 @@ test_entropy_map
 test_png_write
 test_cbm_doctor
 test_cbm_tui
+# Wave 5M recon candidate scanner test (built by `make test-recon`)
+test_recon
 pe-call
 # Wave 5J FUSE view (built by the documented command in docs/fuse-view.md)
 cbm-fuse

@@ -30,10 +30,10 @@ MCP_TESTS = test_mcp_server.py
 
 # PE path is supplied at runtime through CBM_PE_PATH; no build-time default.
 
-all: $(TARGET) $(CLI) $(TESTS)
+all: $(TARGET) $(CLI) $(TESTS) test_recon
 
-$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cdb_shim.c cdb_shim.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h
-	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cdb_shim.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c $(LDFLAGS) -lz
+$(TARGET): main.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h cdb_shim.c cdb_shim.h cbm_container.c cbm_file.c cbm_fuzz.c cbm_fuzz.h cbm_diff.c cbm_diff.h cbm_decode.c cbm_decode.h cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan.h cbm_scan_report.c cbm_scan_report.h png_write.c png_write.h entropy_map.c entropy_map.h cbm_doctor.c cbm_doctor.h cbm_tui.c cbm_tui.h cli_json.c cli_json.h recon.c recon.h
+	$(CC) $(CFLAGS) -o $@ main.c tea_crypto.c tea_native.c pelib.c cdb_shim.c cbm_container.c cbm_file.c cbm_fuzz.c cbm_diff.c cbm_decode.c cbm_inspect.c paced_write.c usb_mass.c cbm_layout.c nand_info.c cbm_scan.c cbm_scan_report.c png_write.c entropy_map.c cbm_doctor.c cbm_tui.c cli_json.c recon.c $(LDFLAGS) -lz
 
 test_tea: test_tea.c tea_crypto.c tea_native.c cbm_backend.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_tea.c tea_crypto.c tea_native.c pelib.c $(LDFLAGS)
@@ -74,6 +74,11 @@ test_cbm_fuzz: test_cbm_fuzz.c cbm_fuzz.c cbm_fuzz.h cbm_container.c tea_crypto.
 test_pelib: test_pelib.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_pelib.c pelib.c $(LDFLAGS)
 
+# Wave 5M: read-only PE recon. Not in TESTS: its own summary line stays
+# outside the frozen `Results:` count sums (see scripts/check-counts.sh).
+test_recon: test_recon.c recon.c recon.h
+	$(CC) $(CFLAGS) -o $@ test_recon.c recon.c $(LDFLAGS)
+
 # Wave 5E: synthetic-PE DeviceIoControl capture (no device, no vendor PE)
 test_cdb_shim: test_cdb_shim.c cdb_shim.c cdb_shim.h pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ test_cdb_shim.c cdb_shim.c pelib.c $(LDFLAGS)
@@ -101,9 +106,9 @@ test_cbm_tui: test_cbm_tui.c cbm_tui.c cbm_tui.h
 pe-call: pe-call.c pelib.c pelib.h
 	$(CC) $(CFLAGS) -o $@ pe-call.c pelib.c $(LDFLAGS)
 
-test: $(TESTS) $(TARGET)
+test: $(TESTS) $(TARGET) test_recon
 	@mkdir -p /tmp/opencode
-	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS) && python3 test_fwemu.py
+	./test_tea && ./test_tea_native && ./test_cbm && ./test_paced && ./test_usb_mass && ./test_layout && ./test_nand && ./test_cbm_file && ./test_cbm_inspect && ./test_pelib && ./test_cdb_shim && ./test_cbm_decode && sh ./test_backend_cli.sh && ./test_cbm_diff && ./test_cbm_fuzz && ./test_cbm_scan && ./test_cbm_scan_report && ./test_entropy_map && ./test_png_write && ./test_cbm_doctor && ./test_cbm_tui && sh ./test_json_cli.sh && python3 $(MCP_TESTS) && python3 test_fwemu.py && ./test_recon
 
 test-mcp: $(TARGET)
 	python3 $(MCP_TESTS)
@@ -111,6 +116,10 @@ test-mcp: $(TARGET)
 # Wave 5L: synthetic firmware model, stdlib Python only (no emulator/device)
 test-fwemu:
 	python3 test_fwemu.py
+
+# Wave 5M: recon suite on its own; CBM_PE_PATH is optional (PE cases skip).
+test-recon: test_recon
+	./test_recon
 
 # CLI-level backend selection: no device access; fixtures go under /tmp/opencode.
 test-cli: $(TARGET)
@@ -190,6 +199,6 @@ ci:
 	echo 'ci: PASS'
 
 clean:
-	rm -f $(TARGET) $(CLI) $(filter-out %.sh,$(TESTS)) $(FUZZ_BINS) *.o
+	rm -f $(TARGET) $(CLI) $(filter-out %.sh,$(TESTS)) test_recon $(FUZZ_BINS) *.o
 
-.PHONY: all test test-mcp test-fwemu test-cli asan fuzz $(FUZZ_BINS) ci clean
+.PHONY: all test test-mcp test-fwemu test-recon test-cli asan fuzz $(FUZZ_BINS) ci clean

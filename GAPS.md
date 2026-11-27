@@ -100,6 +100,15 @@ synthetic regular files; no real device is touched.
 - **What would close the DLL half:** identify the correct key derivation
   (possibly tied to controller identity / serial) or unpack the DLL by other
   means.
+- **Wave 5M (method/tooling half only):** `recon.{h,c}` plus the `recon` CLI
+  rank candidate block-cipher functions in a supplied PE; the method and its
+  checklist are in [docs/universal-re.md](docs/universal-re.md) and the
+  evidence template in [docs/port-spec-template.md](docs/port-spec-template.md).
+  A ranked hit is a lead for manual review, never confirmation. **G2 remains
+  OPEN and requires the DLL**; 5M does not decrypt CBMUsbDisk.dll or recover
+  its key derivation. The separately formatted `test_recon: 13 passed,
+  0 failed` line (7 passed plus a SKIP line when `CBM_PE_PATH` is unset) is
+  outside the `Results:` sums above.
 
 ## Gap 3 — BCH ECC / balanced erase are firmware-internal
 

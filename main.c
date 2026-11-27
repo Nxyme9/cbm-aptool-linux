@@ -29,10 +29,14 @@
  *   cbm-tool cdb-capture <pe-path> --out <capture-file> [--export <name>]
  *                            [--arg0 N] [--arg1 N] [--arg2 N]
  *                            shimmed PE import capture; writes only --out
+ *   cbm-tool recon <pe> [--top N] [--all] [--json]
+ *                            read-only heuristic ranking of candidate
+ *                            block-cipher functions in a vendor PE
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
@@ -66,6 +70,7 @@
 #include "cbm_tui.h"
 #include "cli_json.h"
 #include "cdb_shim.h"
+#include "recon.h"
 
 /* Published RE artifact key (see .gitleaks.toml allowlist). */
 static const char CBM_TEA_KEY[] = "1a2b3c4d5e6fTENG";
@@ -1666,6 +1671,135 @@ static int cdb_capture_mode(int argc, char **argv, FILE *json_out) {
     return rc;
 }
 
+/* ---- wave 5M: read-only block-cipher candidate recon ------------------- */
+
+static void print_recon_usage(FILE *err, const char *prog) {
+    fprintf(err,
+        "Usage: %s recon <pe> [--top N] [--all] [--json]\n"
+        "  --top N   print only the N highest-scoring candidates (default 20)\n"
+        "  --all     print every stored candidate (max %u)\n"
+        "  --json    emit one compact cbm/1 document on stdout\n"
+        "  Read-only: the PE is opened for reading only; nothing is written.\n"
+        "  Exit: 0 ok, 2 usage or input error.\n",
+        prog, RECON_MAX_CANDIDATES);
+}
+
+static void recon_append_flag(char *dst, size_t cap, size_t *pos, const char *s) {
+    size_t room = cap > *pos ? cap - *pos : 0u;
+    size_t n;
+    if (room <= 1u) return;
+    n = strlen(s);
+    if (n > room - 1u) n = room - 1u;
+    memcpy(dst + *pos, s, n);
+    *pos += n;
+    dst[*pos] = '\0';
+}
+
+static void recon_flags(char *dst, size_t cap, const recon_candidate_t *c) {
+    size_t pos = 0u;
+    dst[0] = '\0';
+    if (c->delta_tea) recon_append_flag(dst, cap, &pos, "TEA-delta");
+    if (c->delta_alt) recon_append_flag(dst, cap, &pos, "ALT-delta");
+    if (c->calls_delta) recon_append_flag(dst, cap, &pos, "calls-delta");
+    if (c->repeated_call) recon_append_flag(dst, cap, &pos, "repeat-call");
+    if (pos == 0u) recon_append_flag(dst, cap, &pos, "-");
+}
+
+int recon_cli_ex(int argc, char **argv, FILE *out, FILE *err, FILE *json) {
+    const char *path = (argc >= 3) ? argv[2] : NULL;
+    unsigned long top = 20u;
+    int all = 0;
+    recon_report_t report;
+    uint32_t shown = 0u, i;
+    int arg_i;
+
+    if (!out) out = stdout;
+    if (!err) err = stderr;
+    if (!path || !*path || path[0] == '-') {
+        fprintf(err, "Error: recon requires <pe> path\n");
+        print_recon_usage(err, argv[0] ? argv[0] : "cbm-tool");
+        return 2;
+    }
+    for (arg_i = 3; arg_i < argc; arg_i++) {
+        const char *a = argv[arg_i];
+        if (strcmp(a, "--all") == 0) all = 1;
+        else if (strcmp(a, "--json") == 0) continue; /* stripped by main when present */
+        else if (strcmp(a, "--top") == 0) {
+            char *end = NULL;
+            if (++arg_i >= argc) {
+                fprintf(err, "Error: --top needs a non-negative integer\n");
+                print_recon_usage(err, argv[0]);
+                return 2;
+            }
+            errno = 0;
+            top = strtoul(argv[arg_i], &end, 10);
+            if (errno != 0 || !end || end == argv[arg_i] || *end != '\0') {
+                fprintf(err, "Error: --top needs a non-negative integer\n");
+                print_recon_usage(err, argv[0]);
+                return 2;
+            }
+        } else {
+            fprintf(err, "Error: unknown recon option '%s'\n", a);
+            print_recon_usage(err, argv[0]);
+            return 2;
+        }
+    }
+    memset(&report, 0, sizeof(report));
+    if (recon_file(path, &report) != 0) {
+        fprintf(err, "Error: %s\n", report.error[0] ? report.error : "recon failed");
+        return 2;
+    }
+    shown = all ? report.stored
+                : (top < (unsigned long)report.stored
+                       ? (uint32_t)top : report.stored);
+
+    fprintf(out, "RECON: %s\n", path);
+    fprintf(out, "ImageBase: 0x%08" PRIX32 "  SizeOfImage: 0x%08" PRIX32
+                 "  Sections: %u\n",
+            report.image_base, report.size_of_image, (unsigned)report.sections);
+    fprintf(out, "Functions scanned: %" PRIu32 "\n", report.functions_scanned);
+    fprintf(out, "Candidates: %" PRIu32 " (stored %" PRIu32 ")\n",
+            report.total_candidates, report.stored);
+    fprintf(out, "VA RVA score size bx dx shf flags\n");
+    for (i = 0u; i < shown; i++) {
+        const recon_candidate_t *c = &report.candidates[i];
+        char flags[64];
+        recon_flags(flags, sizeof(flags), c);
+        fprintf(out, "%08" PRIX32 " %08" PRIX32 " %5" PRIu32 " %6" PRIu32
+                     " %3" PRIu32 " %3" PRIu32 " %3" PRIu32 " %s\n",
+                c->va, c->rva, c->score, c->size,
+                c->byte_xor, c->dword_xor, c->shifts, flags);
+    }
+    if (json) {
+        cbm_json_t j;
+        cbm_json_object_begin(&j, json, "recon", "ok");
+        cbm_json_field_string(&j, "path", path);
+        cbm_json_field_u64(&j, "image_base", (unsigned long long)report.image_base);
+        cbm_json_field_u64(&j, "size_of_image", (unsigned long long)report.size_of_image);
+        cbm_json_field_u64(&j, "sections", (unsigned long long)report.sections);
+        cbm_json_field_u64(&j, "functions_scanned",
+                           (unsigned long long)report.functions_scanned);
+        cbm_json_array_begin(&j, "candidates");
+        for (i = 0u; i < shown; i++) {
+            const recon_candidate_t *c = &report.candidates[i];
+            cbm_json_element_object(&j);
+            cbm_json_field_u64(&j, "va", (unsigned long long)c->va);
+            cbm_json_field_u64(&j, "rva", (unsigned long long)c->rva);
+            cbm_json_field_u64(&j, "score", (unsigned long long)c->score);
+            cbm_json_field_u64(&j, "size", (unsigned long long)c->size);
+            cbm_json_field_u64(&j, "byte_xor", (unsigned long long)c->byte_xor);
+            cbm_json_field_u64(&j, "dword_xor", (unsigned long long)c->dword_xor);
+            cbm_json_field_u64(&j, "shifts", (unsigned long long)c->shifts);
+            cbm_json_field_bool(&j, "calls_delta", c->calls_delta);
+            cbm_json_field_bool(&j, "repeated_call", c->repeated_call);
+            cbm_json_object_end(&j);
+        }
+        cbm_json_array_end(&j);
+        cbm_json_end(&j);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     argc = parse_backend_flags(argc, argv);
     const char *command = (argc >= 2) ? argv[1] : NULL;
@@ -1696,7 +1830,8 @@ int main(int argc, char **argv) {
      * not run the selftest first (that would init/cleanup TEA twice). diff and
      * heatmap are pure byte analysis and need no crypto at all. doctor/tui are
      * read-only diagnostics except the explicitly authorised repair path.
-     * All eight subcommands are dispatched before the device path so nothing
+     * recon is a pure read-only PE analysis and needs no crypto backend.
+     * All nine subcommands are dispatched before the device path so nothing
      * can be mistaken for a block-device argument. */
     if (argc >= 2 && strcmp(argv[1], "container") == 0)
         rc = container_mode(argc, argv, json_out);
@@ -1714,6 +1849,8 @@ int main(int argc, char **argv) {
         rc = tui_mode(argc, argv);
     else if (argc >= 2 && strcmp(argv[1], "cdb-capture") == 0)
         rc = cdb_capture_mode(argc, argv, json_out);
+    else if (argc >= 2 && strcmp(argv[1], "recon") == 0)
+        rc = recon_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (selftest() != 0)
         rc = 1;
     else if (argc > 1)

@@ -117,6 +117,19 @@ A synthetic firmware model lives in `fwemu/` (see
 only, runs no firmware and changes no measured count: `test_fwemu:` is a
 separately formatted line outside the `Results:` sums.
 
+Wave 5M adds a read-only `cbm-tool recon <pe> [--top N] [--all] [--json]` CLI
+(`recon.{h,c}`) that ranks candidate block-cipher functions in a PE32 by
+XOR/shift/delta patterns and call structure. It is a lead generator, not
+confirmation; the scoring table, checklist and honest limits are in
+[docs/universal-re.md](docs/universal-re.md), and the `.mind`-style evidence
+template is [docs/port-spec-template.md](docs/port-spec-template.md). G2
+(CBMUsbDisk.dll internals + key derivation) stays OPEN and requires the DLL;
+5M closes only the method/tooling half. `make test` also runs `test_recon`,
+whose separately formatted line is `test_recon: 13 passed, 0 failed` with
+`CBM_PE_PATH` set (7 malformed/random-input checks pass before a SKIP line
+when it is unset). That line is outside the `Results:` sums and does not
+change the measured counts above.
+
 Wave 5D adds three deterministic constructor checks to `test_layout` (5 -> 8),
 the doctor suite (now 24 checks) and the TUI suite (now 18 checks). The shell
 CLI suite appears twice in that log because the chain runs it both inside

@@ -369,6 +369,26 @@ syndrome, erase-count and MMIO register hooks for a future Unicorn runner;
 firmware dump + CBM2199E/2199s/3380 datasheet + ECC counters. See
 [docs/firmware-emulation.md](docs/firmware-emulation.md).
 
+## 10d. Recon candidate finder (Wave 5M, `recon.{h,c}`)
+
+`recon_file(path, report)` is a bounded, read-only PE32/PE32+ reader: it caps
+the file at 64 MiB, bounds-checks e_lfanew, optional header and section table,
+and builds a zero-filled virtual image limited to 256 MiB. The first section
+with `IMAGE_SCN_MEM_EXECUTE` is scanned for `55 8b ec` prologues; each body is
+capped at 8192 bytes and scored for delta immediates, XOR and shift byte
+patterns, repeated `E8` targets, calls into delta-bearing functions, a stack
+frame and a plausible size. Results are sorted by score desc / RVA asc, stored
+up to 512 candidates, and printed or emitted as `cbm/1` JSON by
+`recon_cli_ex` in `main.c`. `cbm-tool recon <pe> [--top N] [--all] [--json]`
+is dispatched before the selftest/device path and never writes to the PE.
+The method, exact scoring table, checklist and honest limits are in
+[docs/universal-re.md](docs/universal-re.md); the `.mind`-style evidence
+template is [docs/port-spec-template.md](docs/port-spec-template.md). G2
+(CBMUsbDisk.dll internals + key derivation) remains OPEN and requires the DLL;
+this wave closes only the method/tooling half. `test_recon` reports on its own
+line (`test_recon: 13 passed, 0 failed` with `CBM_PE_PATH`; 7 passed plus a
+SKIP line without it) outside the `Results:` sums.
+
 ## Build
 
     make clean && make && make test
