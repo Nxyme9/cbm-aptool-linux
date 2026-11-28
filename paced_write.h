@@ -12,6 +12,7 @@ typedef struct {
     size_t burst_bytes;
     time_t last_burst_time;
     size_t total_written;
+    time_t cooldown_sec;   /* paced_init sets PACED_COOLDOWN_SEC; negative skips the wait (tests) */
 } paced_writer_t;
 
 void paced_init(paced_writer_t *pw);

@@ -31,8 +31,11 @@ int cbm_layout_parse(const unsigned char *mbr, size_t len, cbm_layout_t *out);
  * Returns 0 on success. LBA 2048, type/CHS conventions are nominal. */
 int cbm_layout_construct(unsigned long long window_gib, unsigned char mbr[512], char *err, size_t errlen);
 
-/* Validate the DJ partition layout (512M / 4G / rest-of-26G window).
- * Returns 0 when the layout matches expected vendor geometry. */
+/* Validate the DJ partition layout (512M / 4G / remainder of the MBR window).
+ * The constructed MBR window is 26..28 GiB (see cbm_layout_construct); the
+ * accepted stick capacity is at least 28 GiB
+ * (CBM_EXPECTED_WINDOW_SECTORS). Start LBAs must be ordered, non-overlapping
+ * and wholly inside the disk. Returns 0 on a match. */
 int cbm_layout_validate(const cbm_layout_t *layout, unsigned long long disk_sectors);
 
 #endif /* CBM_LAYOUT_H */

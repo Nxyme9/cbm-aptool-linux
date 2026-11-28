@@ -18,12 +18,14 @@
  * Returns 0 on success, -1 on failure. */
 int tea_init(const char *pe_path);
 
-/* Encrypt buffer in place (CBC mode). buf must be multiple of 8 bytes.
- * Returns 0 on success, -1 on failure. */
+/* Encrypt buffer in place (CBC mode). Whole 8-byte blocks are processed; a
+ * trailing partial block (len % 8) is left untouched, so odd lengths such as
+ * the AC1 case of 85687 bytes roundtrip exactly. Returns 0 on success, -1 on
+ * invalid arguments or backend failure. */
 int tea_encrypt(unsigned char *buf, size_t len, const char *key);
 
-/* Decrypt buffer in place (CBC mode). buf must be multiple of 8 bytes.
- * Returns 0 on success, -1 on failure. */
+/* Decrypt buffer in place (CBC mode). Same length rule as tea_encrypt.
+ * Returns 0 on success, -1 on invalid arguments or backend failure. */
 int tea_decrypt(unsigned char *buf, size_t len, const char *key);
 
 /* Cleanup crypto subsystem. */

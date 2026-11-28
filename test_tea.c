@@ -100,6 +100,26 @@ static void test_roundtrip_256(void) {
     PASS();
 }
 
+/* AC1 case: 85687 % 8 == 7. The native backend processes whole 8-byte blocks
+ * and must still be an exact identity over the full buffer after decrypt. */
+static void test_roundtrip_85687(void) {
+    TEST("roundtrip 85687 bytes (AC1)");
+    const size_t n = 85687;
+    unsigned char *orig = malloc(n);
+    unsigned char *buf = malloc(n);
+    const char *key = "1a2b3c4d5e6fTENG";
+    if (!orig || !buf) { free(orig); free(buf); FAIL("alloc failed"); return; }
+    for (size_t i = 0; i < n; i++) orig[i] = (unsigned char)(i * 31u + 5u);
+    memcpy(buf, orig, n);
+    if (tea_encrypt(buf, n, key) != 0) { FAIL("encrypt failed"); }
+    else if (memcmp(buf, orig, n) == 0) { FAIL("encrypt did not change data"); }
+    else if (tea_decrypt(buf, n, key) != 0) { FAIL("decrypt failed"); }
+    else if (memcmp(buf, orig, n) != 0) { FAIL("roundtrip mismatch"); }
+    else PASS();
+    free(orig);
+    free(buf);
+}
+
 static void test_not_ready(void) {
     TEST("not ready check");
     /* Can't easily test without reinit, just verify is_ready returns true after init */
@@ -176,6 +196,7 @@ int main(void) {
     test_roundtrip_8();
     test_roundtrip_64();
     test_roundtrip_256();
+    test_roundtrip_85687();
     test_not_ready();
     test_pe_backend_dispatch();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);

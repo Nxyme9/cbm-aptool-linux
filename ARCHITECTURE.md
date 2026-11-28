@@ -1,10 +1,12 @@
 # Architecture — nx-cbm-lab
 
 Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks.
-Each subsystem maps to one source file; all are exercised by the unit suite
+Each subsystem maps to one source file; the library subsystems have unit tests
 (194 passed with PE / 188 passed with 4 skipped without a usable PE, across
-twenty-one `Results:` lines including CLI backend selection) and the real-device
-validation mode (`cbm-tool <blockdev>`). See [GAPS.md](GAPS.md) for count scope.
+twenty-one `Results:` lines including CLI backend selection). `main.c` itself
+is exercised by the CLI suites (`test_backend_cli.sh`, `test_json_cli.sh`) and
+its real-device validation path requires a physical block device, so neither is
+covered by the in-process unit binaries. See [GAPS.md](GAPS.md) for count scope.
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
@@ -61,11 +63,13 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
 ## 5. MBR / DJ layout validator (`cbm_layout.{h,c}`)
 
 - Parses the MBR (sector 0), verifies signature `0x55AA`.
-- Validates the DJ partition scheme within a 26 GiB window:
+- Validates the DJ partition scheme within an MBR window of 26..28 GiB:
   - DJ_BOOT: 512 MiB, FAT32
   - DJ_OS: 4 GiB, ext4
-  - DJ_DATA: remainder, exFAT
-- Accepted stick capacity: 28 GiB (28672 MiB).
+  - DJ_DATA: remainder of the constructed window, exFAT
+- Accepted stick capacity: at least 28 GiB (28672 MiB), i.e.
+  `CBM_EXPECTED_WINDOW_SECTORS`; the MBR itself may describe a smaller
+  26..28 GiB window, which is why `cbm_layout_construct` takes that range.
 - Unit tests: `test_layout` (8/8).
 
 ## 6. NAND controller identity probe (`nand_info.{h,c}`)
@@ -112,7 +116,8 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   `CBM_PE_PATH`. Writes only `--out`, never a device.
 - Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
   → `diff` → `fuzz` → `scan` → `heatmap` → `doctor` → `tui` →
-  `cdb-capture` → no-args self-test → `verify_device(argv[1])`.
+  `cdb-capture` → `verify_device(argv[1])` → no-args self-test. The device
+  path never gates on `selftest()` because it does not use TEA.
   Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`/
   `cdb-capture`.
 - PE path comes only from the `CBM_PE_PATH` env var (or an explicit argument

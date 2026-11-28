@@ -360,7 +360,12 @@ static int verify_device(const char *path) {
         if (end > last_part_end) last_part_end = end;
     }
     unsigned long long scratch = last_part_end + 1024;
-    if (scratch + 1 >= disk_sectors) scratch = disk_sectors - 2;
+    if (scratch + 1 >= disk_sectors) {
+        fprintf(stderr, "no unpartitioned tail after last partition "
+                        "(last part ends at LBA %llu, disk has %llu sectors)\n",
+                last_part_end, disk_sectors);
+        usb_mass_close(&dev); return 1;
+    }
     long long off = (long long)(scratch * CBM_SECTOR_SIZE);
 
     unsigned char orig[CBM_SECTOR_SIZE], pat[CBM_SECTOR_SIZE], rb[CBM_SECTOR_SIZE];
@@ -373,8 +378,11 @@ static int verify_device(const char *path) {
     }
     if (usb_mass_read_at(&dev, rb, CBM_SECTOR_SIZE, off) != 0 ||
         memcmp(rb, pat, CBM_SECTOR_SIZE) != 0) {
-        fprintf(stderr, "write/read verify FAILED\n");
-        usb_mass_write_at(&dev, orig, CBM_SECTOR_SIZE, off);
+        if (usb_mass_write_at(&dev, orig, CBM_SECTOR_SIZE, off) != 0)
+            fprintf(stderr, "write/read verify FAILED; restore write also FAILED "
+                            "(test pattern may remain at LBA %llu)\n", scratch);
+        else
+            fprintf(stderr, "write/read verify FAILED\n");
         usb_mass_close(&dev); return 1;
     }
     printf("Write/read roundtrip at LBA %llu: OK\n", scratch);
@@ -1869,10 +1877,10 @@ int main(int argc, char **argv) {
         rc = recon_cli_ex(argc, argv, stdout, stderr, json_out);
     else if (argc >= 2 && strcmp(argv[1], "telemetry") == 0)
         rc = telemetry_cli_ex(argc, argv, stdout, stderr, json_out);
-    else if (selftest() != 0)
-        rc = 1;
     else if (argc > 1)
         rc = verify_device(argv[1]);
+    else if (selftest() != 0)
+        rc = 1;
     else
         printf("\nAll systems operational.\n");
 

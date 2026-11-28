@@ -4,14 +4,23 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <errno.h>
 
 #include "paced_write.h"
+
+/* Monotonic seconds, offset by one so 0 stays the "no burst recorded" sentinel. */
+static time_t paced_now(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 1;
+    return (time_t)ts.tv_sec + 1;
+}
 
 void paced_init(paced_writer_t *pw) {
     if (!pw) return;
     pw->burst_bytes = 0;
     pw->last_burst_time = 0;
     pw->total_written = 0;
+    pw->cooldown_sec = PACED_COOLDOWN_SEC;
 }
 
 int paced_should_cooldown(paced_writer_t *pw) {
@@ -24,17 +33,19 @@ void paced_record_burst(paced_writer_t *pw, size_t bytes) {
     pw->burst_bytes += bytes;
     pw->total_written += bytes;
     if (pw->burst_bytes >= PACED_BURST_SIZE) {
-        pw->last_burst_time = time(NULL);
+        pw->last_burst_time = paced_now();
     }
 }
 
 void paced_cooldown(paced_writer_t *pw) {
     if (!pw || pw->last_burst_time == 0) return;
-    time_t now = time(NULL);
-    time_t elapsed = now - pw->last_burst_time;
-    if (elapsed < PACED_COOLDOWN_SEC) {
-        time_t wait = PACED_COOLDOWN_SEC - elapsed;
-        sleep((unsigned int)wait);
+    time_t elapsed = paced_now() - pw->last_burst_time;
+    if (elapsed < 0) elapsed = 0; /* no underflow into an overflowing wait */
+    if (elapsed < pw->cooldown_sec) {
+        struct timespec req;
+        req.tv_sec = pw->cooldown_sec - elapsed;
+        req.tv_nsec = 0;
+        while (nanosleep(&req, &req) < 0 && errno == EINTR) { /* retry */ }
     }
     pw->burst_bytes = 0;
     pw->last_burst_time = 0;
