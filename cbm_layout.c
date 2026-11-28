@@ -1,10 +1,63 @@
 /* cbm_layout.c - CBM vendor MBR/partition layout validation */
+#include <stdio.h>
 #include <string.h>
 #include "cbm_layout.h"
 
 static unsigned int rd32(const unsigned char *p) {
     return (unsigned int)p[0] | ((unsigned int)p[1] << 8) |
            ((unsigned int)p[2] << 16) | ((unsigned int)p[3] << 24);
+}
+
+static void wr32(unsigned char *p, unsigned int v) {
+    p[0] = (unsigned char)(v & 0xffu);
+    p[1] = (unsigned char)((v >> 8) & 0xffu);
+    p[2] = (unsigned char)((v >> 16) & 0xffu);
+    p[3] = (unsigned char)((v >> 24) & 0xffu);
+}
+
+/* Nominal DJ geometry conventions (NOT vendor measurements). The validator
+ * checks sizes only; the start LBA, type bytes and zeroed CHS below are the
+ * documented nominal layout from the frozen spec Design Note 2. */
+#define DJ_BOOT_START_LBA   2048ULL      /* conventional 1 MiB alignment */
+#define DJ_BOOT_SIZE_LBA    1048576ULL   /* 512 MiB FAT32 */
+#define DJ_OS_SIZE_LBA      8388608ULL   /* 4 GiB ext4 */
+#define DJ_BOOT_TYPE        0x0c         /* FAT32 LBA */
+#define DJ_OS_TYPE          0x83         /* Linux / ext4 */
+#define DJ_DATA_TYPE        0x07         /* exFAT */
+
+int cbm_layout_construct(unsigned long long window_gib, unsigned char mbr[512],
+                         char *err, size_t errlen) {
+    if (err && errlen) err[0] = '\0';
+    if (!mbr) {
+        if (err && errlen) snprintf(err, errlen, "MBR buffer is required");
+        return -1;
+    }
+    if (window_gib < 26ULL || window_gib > 28ULL) {
+        /* Supported DJ window is 26..28 GiB; refuse without touching mbr. */
+        if (err && errlen)
+            snprintf(err, errlen,
+                     "window_gib %llu out of supported range 26..28", window_gib);
+        return -1;
+    }
+
+    unsigned long long boot_start = DJ_BOOT_START_LBA;
+    unsigned long long os_start   = boot_start + DJ_BOOT_SIZE_LBA;   /* 1050624 */
+    unsigned long long data_start = os_start + DJ_OS_SIZE_LBA;       /* 9439232 */
+    unsigned long long window_sectors = window_gib * 2097152ULL;     /* GiB -> 512B sectors */
+    unsigned long long data_size  = window_sectors - data_start;     /* remainder of window */
+
+    memset(mbr, 0, CBM_SECTOR_SIZE);
+
+    unsigned char *e0 = mbr + 446;
+    unsigned char *e1 = e0 + 16;
+    unsigned char *e2 = e1 + 16;
+    e0[4] = DJ_BOOT_TYPE; wr32(e0 + 8, (unsigned int)boot_start); wr32(e0 + 12, (unsigned int)DJ_BOOT_SIZE_LBA);
+    e1[4] = DJ_OS_TYPE;   wr32(e1 + 8, (unsigned int)os_start);   wr32(e1 + 12, (unsigned int)DJ_OS_SIZE_LBA);
+    e2[4] = DJ_DATA_TYPE; wr32(e2 + 8, (unsigned int)data_start); wr32(e2 + 12, (unsigned int)data_size);
+
+    mbr[CBM_MBR_SIG_OFF]     = 0x55;
+    mbr[CBM_MBR_SIG_OFF + 1] = 0xaa;
+    return 0;
 }
 
 int cbm_layout_parse(const unsigned char *mbr, size_t len, cbm_layout_t *out) {

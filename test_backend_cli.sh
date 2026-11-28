@@ -1,0 +1,206 @@
+#!/bin/sh
+# test_backend_cli.sh - CLI-level crypto backend selection coverage.
+# Builds on cbm-tool: no device access, no writes to tracked files.
+# All fixtures and captured output live in a fresh /tmp/opencode directory.
+set -u
+
+TOOL=${CBM_TOOL:-./cbm-tool}
+PE_PATH=${CBM_PE_PATH:-}
+NATIVE_LINE='Crypto backend: native (clean-room)'
+PE_LINE='Crypto backend: PE harness (cross-check)'
+CONTAINER_OK='Container mode: crypto roundtrip OK'
+
+SCRATCH=$(mktemp -d /tmp/opencode/cbm-cli-backend.XXXXXX) || {
+    printf 'FAIL: cannot create scratch directory\n'
+    exit 1
+}
+FIXTURE=$SCRATCH/container.bin
+MISSING_PE=$SCRATCH/no-such-ap.exe
+TUI_IMG=$SCRATCH/tui-synthetic.img
+
+passed=0
+failed=0
+skipped=0
+
+TEST() { printf 'TEST: %s ... ' "$1"; }
+PASS() { printf 'PASS\n'; passed=$((passed + 1)); }
+FAIL_CASE() { printf 'FAIL: %s\n' "$1"; failed=$((failed + 1)); }
+SKIP_CASE() { printf 'SKIP (%s)\n' "$1"; skipped=$((skipped + 1)); }
+
+# 85688-byte container: header byte 0x00 (unencrypted), zeros elsewhere.
+dd if=/dev/zero of="$FIXTURE" bs=85688 count=1 status=none || {
+    printf 'FAIL: cannot create 85688-byte container fixture\n'
+    exit 1
+}
+
+# Synthetic 512-byte MBR-shaped regular image for the read-only TUI CLI rows.
+# No device node is touched; a zero signature is enough for diagnosis.
+dd if=/dev/zero of="$TUI_IMG" bs=512 count=1 status=none || {
+    printf 'FAIL: cannot create synthetic TUI fixture\n'
+    exit 1
+}
+
+# $1 label, $2 PE path for this run, $3 expected backend line,
+# $4 extra required output line, $5+ tool arguments.
+run_case() {
+    case_label=$1
+    case_pe=$2
+    case_expected=$3
+    case_extra=$4
+    shift 4
+    out="$SCRATCH/$case_label.out"
+    TEST "$case_label"
+    if ! CBM_PE_PATH="$case_pe" "$TOOL" "$@" >"$out" 2>&1; then
+        FAIL_CASE 'nonzero exit'
+        return
+    fi
+    if ! grep -Fqx "$case_expected" "$out"; then
+        FAIL_CASE "missing exact line: $case_expected"
+        return
+    fi
+    if [ "$case_expected" = "$NATIVE_LINE" ]; then
+        case_other=$PE_LINE
+    else
+        case_other=$NATIVE_LINE
+    fi
+    if grep -Fqx "$case_other" "$out"; then
+        FAIL_CASE 'printed the other backend line'
+        return
+    fi
+    if [ -n "$case_extra" ] && ! grep -Fq "$case_extra" "$out"; then
+        FAIL_CASE "missing: $case_extra"
+        return
+    fi
+    if grep -Fq 'unknown container option' "$out"; then
+        FAIL_CASE 'backend flag not stripped before container parser'
+        return
+    fi
+    PASS
+}
+
+printf '=== CLI Backend Selection Tests ===\n'
+
+# Native must succeed even with a deliberately absent PE path.
+run_case native-selftest "$MISSING_PE" "$NATIVE_LINE" 'All systems operational.' --native-crypto
+run_case container-native-flag "$MISSING_PE" "$NATIVE_LINE" "$CONTAINER_OK" container "$FIXTURE" --native-crypto
+
+# PE is an explicit opt-in: with no CBM_PE_PATH the tool must fail loudly,
+# never fall back to a vendor binary path compiled into the code.
+TEST pe-no-env
+pe_no_env_out="$SCRATCH/pe-no-env.out"
+if env -u CBM_PE_PATH "$TOOL" --pe-crypto >"$pe_no_env_out" 2>&1; then
+    FAIL_CASE 'unset CBM_PE_PATH unexpectedly exited 0'
+elif ! grep -Fq 'CBM_PE_PATH' "$pe_no_env_out"; then
+    FAIL_CASE 'error did not name CBM_PE_PATH'
+else
+    PASS
+fi
+
+TEST native-bogus-pe
+native_bogus_out="$SCRATCH/native-bogus-pe.out"
+if CBM_PE_PATH="$MISSING_PE" "$TOOL" --native-crypto >"$native_bogus_out" 2>&1 &&
+   grep -Fqx "$NATIVE_LINE" "$native_bogus_out"; then
+    PASS
+else
+    FAIL_CASE 'native backend failed with a bogus PE path'
+fi
+
+if [ -z "$PE_PATH" ]; then
+    pe_skip_reason='CBM_PE_PATH not set'
+elif [ ! -f "$PE_PATH" ]; then
+    pe_skip_reason="PE $PE_PATH not present"
+else
+    pe_skip_reason=
+fi
+if [ -n "$pe_skip_reason" ]; then
+    TEST pe-selftest
+    SKIP_CASE "$pe_skip_reason"
+    TEST container-pe-flag
+    SKIP_CASE "$pe_skip_reason"
+else
+    run_case pe-selftest "$PE_PATH" "$PE_LINE" 'TEA roundtrip OK (64 bytes)' --pe-crypto
+    # Flag after "container <path>": parse_backend_flags() must strip it
+    # before container_mode() sees the option list.
+    run_case container-pe-flag "$PE_PATH" "$PE_LINE" "$CONTAINER_OK" container "$FIXTURE" --pe-crypto
+fi
+
+# --all-hits is scan-only: other modes and a bare flag are usage errors (exit 2).
+# Each case must exit 2 and print the blanket guard's message naming --all-hits.
+reject_all_hits() {
+    label=$1
+    shift
+    out="$SCRATCH/all-hits-$label.out"
+    TEST "all-hits-$label"
+    if "$TOOL" "$@" --all-hits >"$out" 2>&1; then
+        FAIL_CASE 'unexpectedly exited 0'
+    elif [ "$?" -ne 2 ]; then
+        FAIL_CASE 'did not exit 2'
+    elif ! grep -Fq -- '--all-hits' "$out"; then
+        FAIL_CASE 'error did not name --all-hits'
+    else
+        PASS
+    fi
+}
+
+# All fixtures are synthetic files created above; no device is opened because
+# parse_backend_flags() rejects --all-hits before any subcommand dispatches.
+reject_all_hits outside-scan container "$FIXTURE"
+reject_all_hits no-mode
+reject_all_hits diff diff "$FIXTURE" "$FIXTURE"
+reject_all_hits fuzz fuzz "$FIXTURE"
+reject_all_hits heatmap heatmap "$TUI_IMG"
+reject_all_hits doctor doctor "$TUI_IMG"
+
+# TUI row: missing device/image path is a usage error (exit 2).
+TEST tui-no-device
+tui_out="$SCRATCH/tui-no-device.out"
+if "$TOOL" tui >"$tui_out" 2>&1; then
+    FAIL_CASE 'tui with no device unexpectedly exited 0'
+elif [ "$?" -ne 2 ]; then
+    FAIL_CASE 'tui with no device did not exit 2'
+else
+    PASS
+fi
+
+# TUI row: read-only on a synthetic image; quitting must not modify it.
+TEST tui-readonly-synthetic
+tui_out="$SCRATCH/tui-readonly.out"
+before=$(sha256sum "$TUI_IMG" | cut -d' ' -f1)
+if printf 'q' | "$TOOL" tui "$TUI_IMG" >"$tui_out" 2>&1; then
+    after=$(sha256sum "$TUI_IMG" | cut -d' ' -f1)
+    if [ "$before" = "$after" ]; then
+        PASS
+    else
+        FAIL_CASE 'synthetic image hash changed after read-only TUI'
+    fi
+else
+    FAIL_CASE 'tui on synthetic image did not exit 0'
+fi
+
+# Doctor row: dry run diagnoses a tiny synthetic regular image read-only.
+# sha256sum before/after is the published proof that no byte changed.
+TEST doctor-dry-run-readonly
+DRY_IMG=$SCRATCH/doctor-dry.img
+dd if=/dev/zero of="$DRY_IMG" bs=512 count=1 status=none || {
+    FAIL_CASE 'cannot create synthetic doctor fixture'
+    printf '\nScratch fixtures: %s\n' "$SCRATCH"
+    printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"
+    [ "$failed" -eq 0 ]
+    exit 1
+}
+dry_out="$SCRATCH/doctor-dry.out"
+before=$(sha256sum "$DRY_IMG" | cut -d' ' -f1)
+if "$TOOL" doctor "$DRY_IMG" >"$dry_out" 2>&1; then
+    after=$(sha256sum "$DRY_IMG" | cut -d' ' -f1)
+    if [ "$before" = "$after" ] && grep -Fq 'Dry run: no writes' "$dry_out"; then
+        PASS
+    else
+        FAIL_CASE 'doctor dry run changed the image or omitted the no-writes line'
+    fi
+else
+    FAIL_CASE 'doctor dry run on synthetic image did not exit 0'
+fi
+
+printf '\nScratch fixtures: %s\n' "$SCRATCH"
+printf 'Results: %d passed, %d failed, %d skipped\n' "$passed" "$failed" "$skipped"
+[ "$failed" -eq 0 ]

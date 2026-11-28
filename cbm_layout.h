@@ -27,6 +27,10 @@ typedef struct {
 /* Parse a 512-byte MBR buffer. Returns 0 on success. */
 int cbm_layout_parse(const unsigned char *mbr, size_t len, cbm_layout_t *out);
 
+/* Construct a nominal DJ layout (512M / 4G / remainder of window).
+ * Returns 0 on success. LBA 2048, type/CHS conventions are nominal. */
+int cbm_layout_construct(unsigned long long window_gib, unsigned char mbr[512], char *err, size_t errlen);
+
 /* Validate the DJ partition layout (512M / 4G / rest-of-26G window).
  * Returns 0 when the layout matches expected vendor geometry. */
 int cbm_layout_validate(const cbm_layout_t *layout, unsigned long long disk_sectors);

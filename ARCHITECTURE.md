@@ -1,13 +1,17 @@
-# Architecture — cbm-aptool-linux
+# Architecture — nx-cbm-lab
 
-Linux-native port of the Chipsbank CBMUsbDisk vendor protocol. Each
-subsystem maps to one source file; all are exercised by the unit suite
-(40/40) and the real-device validation mode (`cbm-tool <blockdev>`).
+Linux-native clean-room reverse-engineering lab for Chipsbank CBM USB sticks.
+Each subsystem maps to one source file; all are exercised by the unit suite
+(194 passed with PE / 188 passed with 4 skipped without a usable PE, across
+twenty-one `Results:` lines including CLI backend selection) and the real-device
+validation mode (`cbm-tool <blockdev>`). See [GAPS.md](GAPS.md) for count scope.
 
 ## 1. TEA crypto core (`tea_crypto.{h,c}`)
 
 Recovered from the vendor PE by the mmap-at-ImageBase harness (see
-[PE-HARNESS.md](PE-HARNESS.md)).
+[PE-HARNESS.md](PE-HARNESS.md)). `tea_crypto.c` is now the backend
+dispatcher; the PE branch calls the shared loader in `pelib.{h,c}` (§10).
+The native default is described in §9.
 
 | Symbol | PE address | Role |
 |---|---|---|
@@ -20,7 +24,9 @@ Recovered from the vendor PE by the mmap-at-ImageBase harness (see
 
 - Key: `"1a2b3c4d5e6fTENG"` (16 bytes, `TEA_KEY_LEN`).
 - Block size: 8 bytes (`TEA_BLOCK_SIZE`); state size: 16 bytes.
-- State is zeroed (`memset 0x531328, 0, 16`) before every encrypt/decrypt call.
+- State is zeroed before every encrypt/decrypt call by `pe_call_void`
+  (`memset` of 16 bytes at RVA `0x131328` / VA `0x531328` inside the loaded
+  image); `tea_crypto.c` does not reset it a second time.
 - Roundtrip verified by `rtlen` (perfect inverse to L=85687) and `rttest`
   (match=1) probes before porting.
 
@@ -31,7 +37,7 @@ Recovered from the vendor PE by the mmap-at-ImageBase harness (see
 - `HLEN = ((filesize - 511) & ~7) + 511` (computed by `cbm_compute_hlen`).
 - Vendor error strings surfaced during RE: `File is encrypted!`,
   `Decrypt Faile!`.
-- Unit tests: `test_cbm` (4/4).
+- Unit tests: `test_cbm` (5/5).
 
 ## 3. Paced writes (`paced_write.{h,c}`)
 
@@ -60,14 +66,14 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   - DJ_OS: 4 GiB, ext4
   - DJ_DATA: remainder, exFAT
 - Accepted stick capacity: 28 GiB (28672 MiB).
-- Unit tests: `test_layout` (5/5).
+- Unit tests: `test_layout` (8/8).
 
 ## 6. NAND controller identity probe (`nand_info.{h,c}`)
 
 - Host-observable only: reads sysfs/udev for VID/PID/vendor/model/driver.
 - Classifies the controller as Chipsbank-class (VID 048d).
 - Does **not** observe BCH ECC or balanced-erase policy (firmware-internal).
-- Unit tests: `test_nand` (3/3).
+- Unit tests: `test_nand` (10/10).
 
 ## 7. Entry point (`main.c`)
 
@@ -83,8 +89,36 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   `--hex-full`, `--min-string`, `--dump-plain <path>` (decrypted 85687-byte
   body) and `--inject <path>` (exact-size replacement body, re-encrypted with
   the header preserved).
-- PE path overridable via `CBM_PE_PATH` env var (default
-  `/tmp/opencode/ap.exe`).
+- `cbm-tool diff <a.plain> <b.plain> [--context N]`: offline body diff via
+  `cbm_diff_print` (changed ranges, changed-byte count, entropy delta and
+  printable-density heatmap) and `cbm_decode_entropy`; no crypto, no device.
+- `cbm-tool fuzz <container> --mutate N --rounds N --seed N [--out <dir>]`:
+  deterministic offline mutation corpus via `cbm_fuzz_run`; refuses block
+  devices and source-as-`--out`, writes only under `--out`.
+- `cbm-tool scan <device> [--start LBA] [--end LBA] [--chunk MiB] [--carve <dir>]
+  [--json <report>] [--all-hits]`: read-only forensic candidate scan via
+  `cbm_scan_image` / `cbm_scan_image_ex` (`NULL, 0` magics — structural probe
+  only); `--all-hits` is scan-only, follows the image path, and keeps every
+  candidate instead of collapsing close clusters. Optional report writers in
+  `cbm_scan_report.{h,c}`. No source write path; `--carve`/`--json` are
+  pre-flighted with `cbm_scan_report_check_output` (realpath string match or
+  `st_dev`/`st_ino`) and write only to the explicit paths. JSON field order is
+  `offset`, `header`, `entropy`, `sha256`, `tokens`; entropy is integer
+  fixed-point with a literal `.`, so output is locale-independent.
+- `cbm-tool cdb-capture <pe-path> --out <capture-file> [--export <name>]
+  [--arg0 N] [--arg1 N] [--arg2 N]`: loads a PE with the wave 5E import shims
+  from `cdb_shim.{h,c}` and writes a deterministic control-code/input/CDB
+  capture; the PE path is mandatory here and never falls back to
+  `CBM_PE_PATH`. Writes only `--out`, never a device.
+- Subcommand dispatch order in `main()`: `parse_backend_flags` → `container`
+  → `diff` → `fuzz` → `scan` → `heatmap` → `doctor` → `tui` →
+  `cdb-capture` → no-args self-test → `verify_device(argv[1])`.
+  Exit codes: 0 ok, 1 runtime error, 2 usage error for `diff`/`fuzz`/`scan`/
+  `cdb-capture`.
+- PE path comes only from the `CBM_PE_PATH` env var (or an explicit argument
+  to `pe-call`); there is no built-in default and no silent fallback.
+  `--pe-crypto` without it fails with an explicit error. Only the opt-in PE
+  backend reads it; the native default ignores it.
 
 ## 8. File-level container I/O (`cbm_file.{h,c}`, `cbm_inspect.{h,c}`)
 
@@ -116,7 +150,204 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
   offset + token for each hit.
 - Unit tests: `test_cbm_inspect` (9/9).
 
-## Data flow (device validation)
+## 9. Clean-room cipher (`tea_native.{h,c}`) and backend selection
+
+The default backend is a pure-C implementation of the CBM block cipher. Its
+constants are recovered data dumped from the PE oracle — not vendor source —
+and its core is a clean-room translation of PE `0x459ec0`. It processes
+`floor(len / 8)` whole 8-byte blocks; trailing bytes of an odd-length buffer
+are left untouched. State is a 16-byte local reset at the start of every call.
+
+### 9.1 Recovered tables
+
+Seventeen constant tables span PE virtual addresses `0x52a9b0`–`0x52ad0f`:
+
+| Group | Tables (PE VA) |
+|---|---|
+| Bit/permutation | `BIT` `0x52ad08`, `T_INIT` `0x52a9b0`, `T_FINAL` `0x52a9f0`, `T_KEY` `0x52aa30`, `T_OUT` `0x52aab8`, `T_FEED` `0x52aae8` |
+| Shift/state | `T_LEFT` `0x52aa68`, `T_RIGHT` `0x52aa78`, `T_STATE` `0x52aa88` |
+| S-boxes | `SBOX0`–`SBOX7`, `0x52ab08`–`0x52acc8` |
+| Core | per-block transform `0x459ec0` |
+
+The rotation tables encode the two special key-schedule bits held in byte 3;
+`T_LEFT`/`T_RIGHT` select the rotation direction for each of the 16 rounds.
+
+### 9.2 Flag sequences
+
+Each 8-byte block runs three 16-round cores against one persistent per-call
+state. A flag of `0x50` is init (`0x10`) + final (`0x40`) permutation with
+right key rotations; `0x70` adds left rotations (`0x20`).
+
+| Direction | Core 1 | Core 2 | Core 3 |
+|---|---|---|---|
+| `tea_native_encrypt` | `0x50` | `0x70` | `0x50` |
+| `tea_native_decrypt` | `0x70` | `0x50` | `0x70` |
+
+Cores 1 and 3 use the low 8 key bytes; core 2 uses the high 8 (`key + 8`).
+
+### 9.3 Golden vectors
+
+Key `1a2b3c4d5e6fTENG`; ciphertext shown as hex. All three decrypt back to
+the exact input.
+
+| Vector | Plaintext | Ciphertext |
+|---|---|---|
+| A | `0000000000000000` (8 zero bytes) | `e66254b5da09fb31` |
+| B | bytes `00..1f` (32 bytes) | `3dd24f1e5c7d940ef690cfcc84ddff02660d74c782b22e1e4015059980c24f01` |
+| C | bytes `01..0f` (15 bytes, odd) | `1b787ed12c571f48090a0b0c0d0e0f` (only the first 8 bytes are encrypted) |
+
+`test_tea_native` (8/8 with PE, 7/7 without a usable PE) also covers state
+reset between calls, short-key rejection without buffer mutation, a 15-byte
+exact-allocation bounds check, and backend flag parsing. Its PE-oracle
+equivalence test compares native and PE ciphertext on deterministic inputs at
+nine lengths (8, 16, 24, 32, 64, 15, 23, 31, 127) and skips when no usable
+PE is supplied. That test reads `CBM_PE_PATH`, the same variable the tool's
+`--pe-crypto` backend uses; there is no default vendor path.
+
+### 9.4 Backend-selection flow
+
+    main()
+      -> parse_backend_flags()            strip --native-crypto / --pe-crypto
+      -> cbm_backend_set()                store choice (native default)
+      -> container mode may return early  (flags already stripped from argv)
+      -> tea_init()  [tea_crypto.c]       native: g_ready = 1, no mmap
+                                          PE: pe_load() holds the image at 0x400000
+      -> tea_encrypt()/tea_decrypt()      dispatch to tea_native_* or pe_call_void()
+
+There is no silent fallback: if the requested backend cannot initialise,
+`tea_init` fails and `tea_encrypt`/`tea_decrypt` refuse to run. In PE mode
+`main()` runs `tea_native_selfcheck()` *before* `tea_init()` — the selfcheck
+maps and unmaps the PE at `0x400000` itself and would otherwise clobber the
+live backend mapping — and prints `PE self-check: PASS ...` on a byte-identical
+match. The PE remains the validation oracle, not a runtime dependency.
+
+## 9b. Decoder, diff and fuzz lab
+
+- `cbm_decode.{h,c}` (11/11): Shannon entropy and 64 B window classification
+  (`constant`/`string`/`opaque`). These are local heuristics, **not** recovered
+  vendor field types.
+- `cbm_diff.{h,c}` (11/11): context-merged changed ranges, changed-byte count,
+  locale-independent signed entropy delta, printable-density heatmap.
+- `cbm_fuzz.{h,c}` (5/5): xorshift64* seeded only by `--seed`; per-round
+  independent streams; each mutation XORs one body byte with a non-zero delta.
+  Manifest records file names, sizes, SHA-256 digests and the mutation list in
+  round order. Every round verifies re-decrypt equals the mutated plaintext
+  before writing; byte 0 is copied unchanged.
+- Safety: block-device source refused, `--out` must be an existing non-device
+  directory distinct from the source path and its directory; output paths that
+  resolve back to the source are refused; writes use stdio only, never
+  `cbm_file_write` (the paced device writer).
+- Format honesty: [docs/container-format.md](docs/container-format.md) labels
+  every interpretation **inferred** and lists what remains unknown.
+
+## 9c. Read-only scanner and report writers (`cbm_scan.{h,c}`, `cbm_scan_report.{h,c}`)
+
+- `cbm_scan.{h,c}` (11/11): 512-byte-aligned structural probe → full
+  85688-byte TEA decrypt → heuristic plausibility gate. `cbm_scan_image`
+  reads in chunks with 171888-byte overlap, dedupes shifted/overlapping
+  candidates by keeping the lowest offset per cluster, and returns hits
+  ascending by offset. Only `cbm_file_read` is used; no write path.
+- `cbm_scan_report.{h,c}` (4/4): JSON array writer with fixed field order,
+  escaped token strings, 64 lowercase hex sha256 digits and fixed-point
+  entropy (`%u.%06u` via integer math, never `%.6f`); carve writer which reads
+  exactly `CBM_CONTAINER_SIZE` bytes per hit and writes
+  `<dir>/hit-NNN-<offset>.cbm` (001-based) via stdio, creating `dir` with
+  `mkdir(0755)`. Shared `cbm_scan_report_check_output` refuses aliases of the
+  source by `realpath` match, identical `st_dev`/`st_ino`, or a source-as-parent
+  path; no output is opened before that guard passes.
+- Honesty: no magic value is known (`docs/container-format.md`); `cbmv1001`
+  is **UNVERIFIED** and only advisory. Detection is structural-only in the
+  CLI (`NULL, 0` magics). Hits are **CANDIDATES**, not confirmed containers;
+  only aligned starts are probed. The default scan collapses one cluster to
+  its lowest offset, while the scan-only opt-in `--all-hits` keeps every
+  candidate, including two genuinely distinct containers starting less than
+  85688 bytes apart. Confirmation still needs a recovered magic/header schema
+  (Gap 4) and a real-container corpus. Real-device scanning is hardware-gated,
+  not part of the suite.
+
+## 9d. Whole-disk entropy heatmap (Wave 5F)
+
+- `entropy_map.{h,c}` (8/8): chunked `cbm_file_read` sampling over
+  `[start,end)` at 1 MiB blocks, entropy from `cbm_decode_entropy`, a
+  deterministic row-major downsample (max/mean/min aggregation, entropy ramp
+  blue -> cyan -> green -> yellow -> red), MBR-based region overlay
+  (`MBR`, `DJ_BOOT`, `DJ_OS`, `DJ_DATA`, `TAIL`) and a fixed-point JSON sidecar.
+  The sample count is capped at 64 Mi and ranges over the cap are rejected.
+- `png_write.{h,c}` (5/5): self-written 8-bit RGB PNG encoder (signature,
+  IHDR, one IDAT with zlib `compress2` level 9 over filter-0 scanlines, IEND,
+  zlib `crc32` per chunk) plus a zlib-only decoder used by the tests to prove
+  signature, chunk order, CRCs, IHDR fields and byte-exact round trip. No
+  external image library.
+- `heatmap_mode()` in `main.c` drives both and prints a deterministic text
+  summary. It is **READ-ONLY**: the source is opened only via `cbm_file_read`
+  plus the strictly `O_RDONLY` `image_last_lba()` capacity probe; `--out` and
+  `--json` are the only write targets and reuse
+  `cbm_scan_report_check_output` to refuse paths that alias the source.
+  Without either flag nothing is written. Image height is
+  `clamp(ceil(samples/width), 1, max(1, CBM_HEATMAP_MAX_PIXELS/width))` with
+  `CBM_HEATMAP_MAX_PIXELS = 1048576`, and `n == 0` gives height 1. Regions are
+  **INFERRED from the MBR, not verified**; a non-DJ or unparseable MBR is
+  reported as MBR+TAIL instead of forced DJ names. A full 500 GiB device pass
+  is a separate hardware-gated step, not implied by a green suite.
+
+## 10. PE loader library (`pelib.{h,c}`)
+
+One reusable fixed-base PE loader now serves the PE backend, the generic
+`pe-call` CLI and `test_pelib`; `tea_crypto.c` no longer contains an mmap or
+section-copy loop.
+
+- `pe_load(img, path, hooks)` reads the PE, checks the DOS/PE headers, section
+  table and every raw-data range with 64-bit bounds arithmetic, and maps it at
+  `PE_BASE 0x400000` / `PE_MAPSZ 0x140000` with `MAP_FIXED_NOREPLACE`. A second
+  concurrent image or an already-occupied base fails cleanly. `path` may be
+  NULL/empty, in which case `CBM_PE_PATH` is used — there is no built-in
+  default path. `tea_init` passes only an explicit, validated path so PE mode
+  never silently falls back.
+- `pe_rva_to_va(img, rva)` resolves an RVA within the declared image size.
+- `pe_call_void(img, rva_or_va, arg, n)` packs `n` bytes (1-3 `uint32_t`
+  words, 4-12 bytes) into `args[0..2]`, zero-fills missing words, zeroes the
+  16-byte TEA state at RVA `0x131328`, and calls through a 3-argument
+  `__stdcall` pointer (callee cleans the stack). `tea_encrypt` supplies
+  `[&buf, len, &key]` with `n = 12`.
+- `pe_export(img, name, &rva)` resolves named exports (absent in `ap.exe`).
+- `pe_import_hook_t` entries patch named imports in the IAT after sections are
+  mapped; hooks are matched case-insensitively, ordinals are skipped.
+- `pe_unload(img)` munmaps the image and clears the singleton; it tolerates
+  NULL and double unload. `tea_cleanup()` calls it once.
+- `pe-call <pe-path> <rva|export-name> <hex-args>` exposes the same API from
+  the shell. `test_pelib` (21 passes with PE; separately formatted
+  `test_pelib: 10 passed, 0 failed` without a usable PE) covers loader
+  failures, golden encrypt `e66254b5da09fb31`, decrypt roundtrip and IAT
+  hook dispatch. The separately formatted `test_fwemu: 17 passed, 0 failed`
+  line is outside the `Results:` sums.
+
+## 10b. CDB capture shims (Wave 5E, `cdb_shim.{h,c}`)
+
+Software-only tier 1 of Gap 1: one fixed-base PE is loaded with an import hook
+table, and the shims write a deterministic text capture. No device node, USB
+gadget, vendor PE or vendor DLL participates in any test.
+
+- `cdb_capture_open(path)` refuses a directory, block or character device and a
+  second concurrent capture, then writes the header `cbm-cdb-capture/1` and
+  flushes every record as it ends. `cdb_capture_count()` counts those records.
+- `cdb_shim_hooks()` covers `kernel32.dll` `DeviceIoControl`, `CreateFileA`,
+  `CreateFileW` and `CloseHandle`; `cdb_shim_log_unknown()` records an import
+  with no dedicated shim as `event=<dll>!<name>`.
+- Every shim returns a synthetic Win32 success. `DeviceIoControl` zeroes
+  `*lpBytesReturned` and up to 512 output bytes, never modifies the input
+  buffer, and never touches a caller pointer when no capture is open.
+- Only `IOCTL_SCSI_PASS_THROUGH` (`0x0004D004`, `Cdb[]` at offset 24) and
+  `IOCTL_SCSI_PASS_THROUGH_DIRECT` (`0x0004D014`, `Cdb[]` at offset 28) decode
+  a CDB, bounded by `CdbLength` (offset 6), 16 bytes and the real buffer
+  length. Any other control code logs the raw input only.
+- `test_cdb_shim` builds a synthetic PE with one `DeviceIoControl` import,
+  calls the patched IAT slot, and compares the whole capture file byte for
+  byte (`2a 00 00 00 00 00`), plus unknown-control, truncation, NULL-pointer,
+  no-capture and `CreateFileA/W` escaping cases. `docs/cdb-table.md` is the
+  observed/not-observed table; its vendor column reads `not observed` because
+  G1-b (running the capture against the user's own PE) has not run.
+
+
 
     /dev/sdX
       -> usb_mass_open (BLKGETSIZE64 capacity)
@@ -127,9 +358,188 @@ Standard Linux block I/O — no vendor SCSI CDBs required for the working path.
       -> usb_mass_write_at (restore original sector)
       -> verify restored
 
+## 10c. Synthetic firmware model (Wave 5L, `fwemu/`)
+
+SYNTHETIC ONLY: no firmware image, ARM/8051 program, Unicorn or ARM toolchain
+is used. The stdlib Python package models BCH(255, 223, t=4) syndromes and
+decode, per-block erase counts with a lowest-count/lowest-index policy, and a
+deterministic trace whose every line contains `synthetic`. `HookSink` exposes
+syndrome, erase-count and MMIO register hooks for a future Unicorn runner;
+`run_synthetic()` drives them in plain Python. Gap 3 stays open: the gate is a
+firmware dump + CBM2199E/2199s/3380 datasheet + ECC counters. See
+[docs/firmware-emulation.md](docs/firmware-emulation.md).
+
+## 10d. Recon candidate finder (Wave 5M, `recon.{h,c}`)
+
+`recon_file(path, report)` is a bounded, read-only PE32/PE32+ reader: it caps
+the file at 64 MiB, bounds-checks e_lfanew, optional header and section table,
+and builds a zero-filled virtual image limited to 256 MiB. The first section
+with `IMAGE_SCN_MEM_EXECUTE` is scanned for `55 8b ec` prologues; each body is
+capped at 8192 bytes and scored for delta immediates, XOR and shift byte
+patterns, repeated `E8` targets, calls into delta-bearing functions, a stack
+frame and a plausible size. Results are sorted by score desc / RVA asc, stored
+up to 512 candidates, and printed or emitted as `cbm/1` JSON by
+`recon_cli_ex` in `main.c`. `cbm-tool recon <pe> [--top N] [--all] [--json]`
+is dispatched before the selftest/device path and never writes to the PE.
+The method, exact scoring table, checklist and honest limits are in
+[docs/universal-re.md](docs/universal-re.md); the `.mind`-style evidence
+template is [docs/port-spec-template.md](docs/port-spec-template.md). G2
+(CBMUsbDisk.dll internals + key derivation) remains OPEN and requires the DLL;
+this wave closes only the method/tooling half. `test_recon` reports on its own
+line (`test_recon: 13 passed, 0 failed` with `CBM_PE_PATH`; 7 passed plus a
+SKIP line without it) outside the `Results:` sums.
+
+## 10e. Derived vault (Wave 5Q, `vault.{h,c}`)
+
+`vault_create/load/save` store key/value records inside exactly one
+`CBM_CONTAINER_SIZE` (85688-byte) envelope: byte 0 is the preserved header
+byte (bit 7 = encrypted) and bytes 1..85687 are the TEA body. The plaintext
+body is a private format — FNV-1a 64 checksum, `CBMVLT01` magic, u16 version,
+u16 count, u32 reserved, then records of `u16 label_len, u16 value_len,
+label, value` in insertion order, zero-padded. It is a **derived** format: it
+reuses the envelope and the clean-room TEA core but claims no vendor
+compatibility. Labels are 1..63 printable ASCII bytes, values 0..4096 bytes,
+at most 1024 records within the 85663-byte record budget; `put` replaces an
+existing label in place. The key comes from `CBM_VAULT_KEY` (exactly 16
+bytes); when unset the CLI uses the public `TEA_NATIVE_KEY` and prints an
+explicit warning (obfuscation, not confidentiality). Wrong key, ciphertext
+tamper and checksum tamper are all refused. Writes to a block device require
+`--write-back`, and every write is read back and compared; `get`/`list` never
+write. `vault_cli_ex` emits `cbm/1` JSON for all five commands and never emits
+its own error document (`main.c` does that on a non-zero return). `test_vault`
+reports on its own line (`test_vault: 18 passed, 0 failed`) outside the
+`Results:` sums. Layout, limits and CLI usage: [docs/vault.md](docs/vault.md).
+
+## 10f. BadUSB trust scanner (Wave 5P, `trust.{h,c}`)
+
+`trust_parse_profile` / `trust_load_profile` read one flat JSON profile
+(`vid`, `pid`, `product`, `interfaces[]`, `cdbs[]`, `firmware_marker`) with a
+bounded, depth-aware key lookup; files are capped at 1 MiB and unknown keys are
+ignored. `serial` is parsed but never stored or compared, so baselines keep
+redacted serials. `trust_compare` appends findings in a stable order
+(identity, product, interfaces, CDBs, firmware) with severities: `usb-id` and
+`iface-extra-hid` critical; `iface-extra`, `iface-missing`, `product`,
+`cdb-unknown` and `fw-marker-changed` warning; `cdb-not-observed` and
+`fw-unverified` info. Trusted means zero critical and zero warning.
+`trust_observe_sysfs` resolves `/sys/class/block/<dev>/device`, walks up to the
+USB device directory and reads `idVendor`, `idProduct`, `product` and each
+interface's class/subclass/protocol — it never opens the device for I/O.
+`trust_cli_ex` requires `--baseline` (fail closed), exits 0 trusted / 1
+findings or error / 2 usage, emits `cbm/1` JSON and never emits its own error
+document. `test_trust` reports on its own line (`test_trust: 16 passed,
+0 failed`) outside the `Results:` sums. Details:
+[docs/device-trust.md](docs/device-trust.md).
+
+## 10g. CTF challenge and write-up (Wave 5K)
+
+`challenge/generate.py --out <image> [--flag <text>]` writes a sparse 64 MiB
+regular file: a nominal DJ MBR (same constants as `cbm_layout.c`) at LBA 0 and
+one 85688-byte container at LBA 4096. It does not create the ciphertext itself;
+it calls `cbm-tool container --inject --output` on a seed container so the
+challenge and solver share one TEA implementation. The plaintext body is
+deterministic 85687-byte printable data with the flag at a fixed offset.
+`solver/solve.sh <image>` runs `cbm-tool scan --carve --json`, then
+`cbm-tool container --dump-plain` on each carved candidate, and prints the flag.
+It is read-only on the image and confines all scratch output to `/tmp/opencode`.
+`test_challenge.sh` generates a fresh image and checks the exact flag end to
+end; its `CTF challenge: 6 passed, 0 failed` line is outside the `Results:`
+sums. The full RE journey and gap gates are in `WRITEUP.md`; task and hints in
+`challenge/README.md`.
+
+## 10h. Distributed mesh scan (Wave 5N, `mesh_scan.{h,c}`)
+
+`mesh_plan_ranges` splits an inclusive byte range into start offsets whose
+consecutive distance is at most `chunk_bytes`; the step is
+`chunk_bytes - 171888`, where 171888 is two 85688-byte containers plus one LBA.
+That overlap guarantees a container straddling a range boundary is wholly
+inside at least one range, and it makes `chunk_bytes <= 171888` a hard error.
+`mesh_scan_run` walks the planned ranges and hands each to a
+`mesh_worker_fn` callback: transport-agnostic, so the in-tree worker can run
+`cbm_scan_image_ex` read-only while a CLS adapter can forward the same range to
+a peer. Every worker owns its hit array (`cbm_scan_free_hits`); the coordinator
+copies hits into one aggregate, sorts by absolute offset and collapses
+duplicates with `mesh_dedup`, because overlap ranges legitimately see the same
+container twice. A peer that is absent or returns an error causes that range to
+be retried with a local read-only scan and counted in `local_retries`; it is
+never silently dropped. `mesh_result_t.mode` is `distributed` only when at least
+one range was answered by a peer, otherwise `local_fallback`, and
+`mode_detail` states how many of how many ranges ran where. `mesh_report_json`
+emits one deterministic `cbm/1` document with mode, worker/job counters and the
+deduplicated hits; worker names are diagnostics only and never appear in JSON.
+Nothing in this module writes to the scanned image or device.
+`test_mesh_scan` uses two local mock workers plus the real offline scanner on a
+512 KiB synthetic image and reports on its own line
+(`test_mesh_scan: 6 passed, 0 failed`) outside the `Results:` sums. Details and
+the CLS adapter seam: [docs/distributed-scan.md](docs/distributed-scan.md).
+
+## 10i. exFAT undelete carver (Wave 5R, `exfat_carver.{h,c}`)
+
+`exfat_carve` reads an exFAT volume at an explicit byte offset and reports
+deleted files whose metadata is intact; `exfat_carve_dj_data` derives the offset
+from the MBR via `cbm_layout_parse` and partition type `0x07`. The reader
+validates the `EXFAT   ` boot signature and `0x55AA`, the sector/cluster
+exponents, the allocation-bitmap entry (`0x81`) in the root directory and, for
+each deleted entry (`0xE5`), a contiguous stream (`NoFatChain`), an in-range
+first cluster and free bitmap bits for every data cluster. Only then are bytes
+copied to the caller-named output directory; fragmented, overwritten or
+out-of-range entries become `lost` report entries with a reason, never guessed
+bytes. Live entries (`0x85`) are ignored. The source is opened read-only and
+may be a regular file or block device. `test_exfat_carver` builds a synthetic
+16-sector volume under `/tmp/opencode` (intact deleted file, overwritten deleted
+file, live file, corrupt boot, synthetic MBR) and reports on its own line
+(`test_exfat_carver: 5 passed, 0 failed`) outside the `Results:` sums. Contract
+and limits: [docs/exfat-carving.md](docs/exfat-carving.md).
+
+## 10j. Prometheus telemetry exporter (Wave 5S, `telemetry.{h,c}`)
+
+`telemetry_state_t` carries eight metrics: `device_present`,
+`device_capacity_bytes`, `scan_progress_ratio`, `containers_found`,
+`cdb_commands_total`, `entropy_blocks_total`,
+`last_validation_timestamp_seconds` and `crypto_backend_native`. Device
+presence/capacity come from a read-only probe (`stat` for regular files,
+`O_RDONLY` + `BLKGETSIZE64` for block devices); counters come from a caller-named
+key=value state file re-read on each `/metrics` scrape, parsed into a temporary
+and committed atomically so a bad line cannot yield a partial update. A refresh
+failure returns HTTP 500, never stale values. `telemetry_scrub_device`
+canonicalises the path and keeps only the final component, so by-id serials
+never enter the `device` label. `telemetry_listen` binds loopback for `:PORT`;
+a routable bind is an explicit operator choice. `telemetry_cli_ex` serves until
+SIGINT/SIGTERM or prints one document with `--print` (no banner, clean for
+redirection). `test_telemetry` exercises the render, scrub, probe, state parser
+and a real loopback HTTP scrape with eight checks on its own line
+(`test_telemetry: 8 passed, 0 failed`) outside the `Results:` sums. Contract:
+[docs/telemetry.md](docs/telemetry.md); dashboard: `dashboards/cbm.json`.
+
+## 10k. Pico inspector (Wave 5O, `pico/`)
+
+`tea_core.{h,c}` is a POSIX-free subset of the 5A cipher: the same recovered
+tables, three-core transform and key schedule, but no PE loader, `mmap`,
+stdio device I/O or host helpers. `inspector.{h,c}` adds SDK-free analysis
+(byte-0 encrypted flag, Shannon entropy, printable-string count, bounded
+hexdump, report struct). `test_vectors.h` freezes vectors measured from
+`tea_native_encrypt()`; `test_host.c` verifies the embedded sources byte-for-
+byte (18 checks, own summary line outside the `Results:` sums). `test.sh`
+runs that host test and builds `CMakeLists.txt` only when `PICO_SDK_PATH`
+points at a real SDK; otherwise it prints an explicit skip. `firmware.c` takes
+an exact-size 85688-byte container over USB serial, decrypts in RAM and
+prints a report; two buttons dump plaintext and verify the full-body
+roundtrip. Buffers are static (RP2040 has ~8 KiB stack). Source and host
+vectors are committed; firmware build/flash and USB-mass-storage-host input
+stay hardware-gated with exact gates in [docs/pico-inspector.md](docs/pico-inspector.md).
+
 ## Build
 
     make clean && make && make test
 
-`CC = gcc`, `CFLAGS = -m32 -Wall -Wextra -O2 -g`. Produces `cbm-tool` plus
-eight test binaries. All 39 tests pass.
+`CC = gcc`; `CFLAGS` adds `-Wformat=2 -Wshadow -Wstrict-prototypes
+-Wmissing-prototypes -Wvla -fstack-protector-strong -fstack-clash-protection
+-D_FORTIFY_SOURCE=2` to `-m32 -O2 -g -Wall -Wextra`, and `LDFLAGS` adds
+`-Wl,-z,relro,-z,now`; the `cbm-tool` target also links `-lz`. Produces
+`cbm-tool`, the `pe-call` CLI, twenty test binaries
+and one shell CLI suite. Measured at HEAD `245119b` plus the wave 5E working
+tree: 194 passed, 0 failed, 0 skipped with PE, and 188 passed, 0 failed,
+4 skipped without a usable PE, each across 21 `Results:` lines (plus a
+separately formatted `test_pelib` line: 21 / 10 passes, plus the separately
+formatted `test_fwemu: 17 passed, 0 failed` line). Counts are from
+`/tmp/opencode/nohl-final-with-pe.log` and
+`/tmp/opencode/nohl-final-without-pe.log`; see [GAPS.md](GAPS.md).
