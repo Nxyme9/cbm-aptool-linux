@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 
 #include "tea_crypto.h"
 #include "cbm_backend.h"
@@ -29,6 +30,7 @@
 #define TEA_DECRYPT_RVA 0x59d50u   /* VA 0x459d50 */
 
 static int g_ready = 0;
+static int g_mapped = 0;   /* true only while a PE image owns the mapping */
 static pe_image_t *g_pe_img = NULL;
 static int g_backend = CBM_BACKEND_NATIVE;
 
@@ -51,6 +53,16 @@ void cbm_backend_set(int backend) {
 }
 
 int cbm_backend_get(void) { return g_backend; }
+
+/* Both public entry points reject invalid inputs before dispatch. The PE ABI
+ * takes a 32-bit length and reads exactly TEA_KEY_LEN key bytes, so a longer
+ * size_t or a short key would otherwise truncate or read past the key. */
+static int tea_args_valid(const unsigned char *buf, size_t len, const char *key) {
+    if (!buf || !key) return 0;
+    if (len > (size_t)INT_MAX) return 0;
+    if (strlen(key) < TEA_KEY_LEN) return 0;
+    return 1;
+}
 
 /* Invoke one PE core through pelib's 3-word __stdcall ABI: args[0] is the
  * caller buffer address, args[1] the byte length and args[2] the key address.
@@ -87,12 +99,16 @@ int tea_init(const char *pe_path) {
         g_pe_img = NULL;
         return -1;
     }
+    g_mapped = 1;
     g_ready = 1;
     return 0;
 }
 
 void tea_cleanup(void) {
-    pe_unload(g_pe_img); /* idempotent; clears pelib's singleton */
+    if (g_mapped) {
+        pe_unload(g_pe_img);
+        g_mapped = 0;
+    }
     g_pe_img = NULL;
     g_ready = 0;
 }
@@ -100,14 +116,14 @@ void tea_cleanup(void) {
 int tea_is_ready(void) { return g_ready; }
 
 int tea_encrypt(unsigned char *buf, size_t len, const char *key) {
-    if (!g_ready) return -1;
+    if (!g_ready || !tea_args_valid(buf, len, key)) return -1;
     if (g_backend == CBM_BACKEND_NATIVE)
         return tea_native_encrypt(buf, len, key);
     return tea_call_pe(TEA_ENCRYPT_RVA, buf, len, key);
 }
 
 int tea_decrypt(unsigned char *buf, size_t len, const char *key) {
-    if (!g_ready) return -1;
+    if (!g_ready || !tea_args_valid(buf, len, key)) return -1;
     if (g_backend == CBM_BACKEND_NATIVE)
         return tea_native_decrypt(buf, len, key);
     return tea_call_pe(TEA_DECRYPT_RVA, buf, len, key);

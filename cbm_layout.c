@@ -85,6 +85,17 @@ int cbm_layout_validate(const cbm_layout_t *layout, unsigned long long disk_sect
     if (!layout || !layout->valid_mbr || layout->part_count != 3) return -1;
     if (disk_sectors == 0 || disk_sectors < CBM_EXPECTED_WINDOW_SECTORS) return -1;
 
+    /* Entries must be ordered, non-overlapping and inside the disk. The
+     * subtraction keeps start + size from wrapping in 64-bit arithmetic. */
+    unsigned long long prev_end = 0;
+    for (int i = 0; i < layout->part_count; i++) {
+        const cbm_part_t *p = &layout->parts[i];
+        if (p->start_lba < prev_end) return -1;
+        if (p->start_lba > disk_sectors ||
+            p->size_lba > disk_sectors - p->start_lba) return -1;
+        prev_end = p->start_lba + p->size_lba;
+    }
+
     /* DJ_BOOT 512 MiB, DJ_OS 4 GiB, DJ_DATA remainder of ~26 GiB window. */
     unsigned long long boot = layout->parts[0].size_lba * CBM_SECTOR_SIZE;
     unsigned long long os   = layout->parts[1].size_lba * CBM_SECTOR_SIZE;

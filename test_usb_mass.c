@@ -1,5 +1,6 @@
 /* test_usb_mass.c - Linux USB mass-storage block device layer tests */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -13,14 +14,28 @@ static int tests_failed = 0;
 #define PASS() do { printf("PASS\n"); tests_passed++; } while(0)
 #define FAIL(msg) do { printf("FAIL: %s\n", msg); tests_failed++; } while(0)
 
-static const char *TMP_PATH = "/tmp/opencode/usb_mass_test.dat";
+static char tmp_path[64];
+
+/* Unique per-run scratch file: mkstemp avoids pre-existing-file/symlink races. */
+static int make_tmp_file(void) {
+    char templ[] = "/tmp/opencode/usb_mass_test_XXXXXX";
+    int fd = mkstemp(templ);
+    if (fd < 0) return -1;
+    close(fd);
+    snprintf(tmp_path, sizeof(tmp_path), "%s", templ);
+    return 0;
+}
+
+static void remove_tmp_file(void) {
+    if (tmp_path[0]) unlink(tmp_path);
+}
 
 static void test_open_write_read_close(void) {
     TEST("usb_mass open/write/read/close");
-    int fd = open(TMP_PATH, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    int fd = open(tmp_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (fd >= 0) close(fd);
     usb_mass_dev_t dev;
-    if (usb_mass_open(TMP_PATH, &dev) != 0) { FAIL("open failed"); return; }
+    if (usb_mass_open(tmp_path, &dev) != 0) { FAIL("open failed"); return; }
     if (usb_mass_capacity(&dev) != 0) { FAIL("capacity after truncate"); usb_mass_close(&dev); return; }
     unsigned char wbuf[64];
     for (int i = 0; i < 64; i++) wbuf[i] = (unsigned char)(i * 3 + 1);
@@ -43,10 +58,10 @@ static void test_open_missing_fails(void) {
 
 static void test_read_after_close_fails(void) {
     TEST("usb_mass read after close fails");
-    int fd = open(TMP_PATH, O_RDWR | O_CREAT | O_TRUNC, 0600);
+    int fd = open(tmp_path, O_RDWR | O_CREAT | O_TRUNC, 0600);
     if (fd >= 0) close(fd);
     usb_mass_dev_t dev;
-    if (usb_mass_open(TMP_PATH, &dev) != 0) { FAIL("open failed"); return; }
+    if (usb_mass_open(tmp_path, &dev) != 0) { FAIL("open failed"); return; }
     usb_mass_close(&dev);
     unsigned char b[8];
     if (usb_mass_read(&dev, b, 8) != -1) { FAIL("read after close should fail"); return; }
@@ -55,9 +70,16 @@ static void test_read_after_close_fails(void) {
 
 int main(void) {
     printf("=== USB Mass Storage Tests ===\n");
-    test_open_write_read_close();
-    test_open_missing_fails();
-    test_read_after_close_fails();
+    TEST("mkstemp scratch file");
+    if (make_tmp_file() != 0) {
+        FAIL("mkstemp failed");
+    } else {
+        PASS();
+        test_open_write_read_close();
+        test_open_missing_fails();
+        test_read_after_close_fails();
+    }
+    remove_tmp_file();
     printf("\nResults: %d passed, %d failed\n", tests_passed, tests_failed);
     return tests_failed > 0 ? 1 : 0;
 }

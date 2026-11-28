@@ -9,6 +9,7 @@
 #define _LARGEFILE64_SOURCE
 #include <fcntl.h>
 #include <unistd.h>
+#include <errno.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>
 
@@ -38,13 +39,35 @@ int usb_mass_open(const char *path, usb_mass_dev_t *dev) {
 }
 
 int usb_mass_read_at(usb_mass_dev_t *dev, unsigned char *buf, size_t len, long long offset) {
+    size_t done = 0;
     if (!dev || dev->fd < 0 || !buf || len == 0 || offset < 0) return -1;
-    return (long long)pread(dev->fd, buf, len, (off_t)offset) == (long long)len ? 0 : -1;
+    while (done < len) {
+        ssize_t n = pread(dev->fd, buf + done, len - done,
+                          (off_t)(offset + (long long)done));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1; /* short file / unexpected EOF */
+        done += (size_t)n;
+    }
+    return 0;
 }
 
 int usb_mass_write_at(usb_mass_dev_t *dev, const unsigned char *buf, size_t len, long long offset) {
+    size_t done = 0;
     if (!dev || dev->fd < 0 || !buf || len == 0 || offset < 0) return -1;
-    return (long long)pwrite(dev->fd, buf, len, (off_t)offset) == (long long)len ? 0 : -1;
+    while (done < len) {
+        ssize_t n = pwrite(dev->fd, buf + done, len - done,
+                           (off_t)(offset + (long long)done));
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (n == 0) return -1; /* no progress: avoid an endless loop */
+        done += (size_t)n;
+    }
+    return 0;
 }
 
 int usb_mass_read(usb_mass_dev_t *dev, unsigned char *buf, size_t len) {

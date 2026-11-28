@@ -43,8 +43,11 @@ static int read_sysfs(const char *path, char *buf, size_t len) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
     if (!fgets(buf, (int)len, f)) { fclose(f); return -1; }
-    fclose(f);
     size_t n = strlen(buf);
+    /* A sysfs value is one short line. If no newline was read, either the
+     * buffer truncated the value or the file was malformed; refuse both. */
+    if (ferror(f) || n == 0 || buf[n - 1] != '\n') { fclose(f); return -1; }
+    fclose(f);
     while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
     return 0;
 }
@@ -116,6 +119,7 @@ int nand_info_probe(const char *block_dev, nand_info_t *info) {
 }
 
 int nand_info_is_chipsbank(const nand_info_t *info) {
-    /* Chipsbank Co. Ltd USB VID = 0x048d */
-    return info && strncasecmp(info->vendor_id, "048d", 4) == 0;
+    /* Chipsbank Co. Ltd USB VID = 0x048d — require the exact 4-character value,
+     * not a prefix of a longer/truncated sysfs string. */
+    return info && strcasecmp(info->vendor_id, "048d") == 0;
 }

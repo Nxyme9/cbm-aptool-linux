@@ -95,6 +95,12 @@ recovered tables, flag sequences and golden vectors.
 
     make clean && make && make test
 
+Full `make test` coverage needs a vendor `ap.exe`: set
+`CBM_PE_PATH=/path/to/ap.exe` (this lab keeps its copy at
+`/tmp/opencode/ap.exe`). Without a usable PE, the PE-only cases print SKIP and
+the sums drop from 194 passed to 188 passed / 4 skipped. Building and all
+normal (native-backend) modes need no PE at all.
+
 Requires gcc with 32-bit support (`gcc -m32`), make and zlib (`-lz`, verified
 with 32-bit zlib-ng 1.3.1). Observed on this tree (HEAD `245119b` plus the
 wave 5E working-tree changes listed in the log, 2026-11-26) with the full chain
